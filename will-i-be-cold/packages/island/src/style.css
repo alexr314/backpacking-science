@@ -2129,3 +2129,100 @@
     transition: none !important;
   }
 }
+
+/* ===== the sleep system's controls, and the small number fields ======================== */
+
+/* two rows on the sleep tab: the system above, the conditions beneath, one hairline between them and the scene */
+.wibc-sleep-controls + .wibc-controls {
+  border-top: none;
+  padding-top: 0;
+}
+
+.wibc .wibc-num {
+  font-family: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: rgba(7, 11, 30, 0.45);
+  border: 1px solid var(--axis);
+  border-radius: 999px;
+  padding: 5px 10px;
+  text-align: right;
+  min-width: 0;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.wibc .wibc-num::-webkit-inner-spin-button,
+.wibc .wibc-num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.wibc .wibc-num[aria-invalid='true'] {
+  border-color: var(--critical);
+}
+
+.wibc-control-unit {
+  color: var(--ink-2);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.wibc-seg-small button {
+  font-size: 12.5px;
+  padding: 5px 11px;
+}
+
+.wibc-pads {
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.wibc-pad {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wibc-pad-r {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.wibc .wibc-pad-remove {
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-3);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.wibc .wibc-pad-remove:hover,
+.wibc .wibc-pad-remove:focus-visible {
+  color: var(--ink);
+  border-color: var(--axis);
+}
+
+.wibc .wibc-pad-add::before {
+  content: '+ ';
+  color: inherit;
+}
+
+/* the encounter curve as a keyboard slider: a ring when it holds focus */
+.wibc-curve-slider {
+  outline: none;
+}
+
+.wibc-curve-slider:focus-visible {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}

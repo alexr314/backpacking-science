@@ -16,9 +16,13 @@ import {
   HIKING_MET_BY_GRADE,
   PHASE_METABOLIC_RATE_MET,
   REFERENCE_MATTRESS_IMPERIAL_R,
+  QUILT_LABEL_CORRECTION_K,
   solveSleepSystem,
   SLEEP_VENT_HEADROOM_K,
   type BagSpec,
+  type LabelRatingType,
+  type PadSpec,
+  type QuiltProvenance,
   type CoverageReport,
   type GearInventory,
   type PhaseCoverage,
@@ -158,17 +162,25 @@ export interface PhaseSettings {
   readonly asBlanket: boolean;
 }
 
+/**
+ * Where each phase starts. The two camp phases start with the bag already draped: the client
+ * reaches for it every time at those hours, so off was the wrong default ("that's basically
+ * always needed, at least for my configurations"). Only the two phases whose `PHASE_CONTROLS`
+ * offer the toggle can carry it; the engine ignores `bagDraped` elsewhere.
+ */
 export const DEFAULT_SETTINGS: Readonly<Record<PhaseName, PhaseSettings>> = {
-  camp_morning: { shelter: 'forest', activity: 'standing', wet: false, bagDraped: false, campfire: false, wornInside: [], asBlanket: false },
+  camp_morning: { shelter: 'forest', activity: 'standing', wet: false, bagDraped: true, campfire: false, wornInside: [], asBlanket: false },
   hiking: { shelter: 'open', activity: 'rolling', wet: false, bagDraped: false, campfire: false, wornInside: [], asBlanket: false },
   day_break: { shelter: 'open', activity: 'standing', wet: false, bagDraped: false, campfire: false, wornInside: [], asBlanket: false },
-  camp_evening: { shelter: 'forest', activity: 'sitting', wet: false, bagDraped: false, campfire: true, wornInside: [], asBlanket: false },
+  camp_evening: { shelter: 'forest', activity: 'sitting', wet: false, bagDraped: true, campfire: true, wornInside: [], asBlanket: false },
   sleep: { shelter: 'tent', activity: 'sitting', wet: false, bagDraped: false, campfire: false, wornInside: [], asBlanket: false },
 };
 
 export interface PanelInputs {
   readonly kit: Kit;
   readonly settings: PhaseSettings;
+  /** The bag and the pads. Read by the sleep phase, and by the clothed phases' bag-as-blanket term. Default: `SLEEP_GEAR`. */
+  readonly sleepGear?: SleepGear;
   /**
    * Unit for the engine's prose (`report.verdict`, `gap.fix.text`). Follows the panel's
    * °F/°C toggle so the sentences agree with the axis. Numbers stay SI regardless.
@@ -177,19 +189,41 @@ export interface PanelInputs {
 }
 
 /**
- * The sleep system from `packages/heat/README.md`'s worked example: a US-labelled "20 °F" bag
- * (labelled by `T_lim`, as US brands do) on an R 4.2 insulated air pad. Choosing a different
- * bag or pad belongs on the gear tab, with the rest of the inventory, and is not built yet.
+ * The sleep system the panel starts on, from `packages/heat/README.md`'s worked example: a
+ * US-labelled "20 °F" bag (labelled by `T_lim`, as US brands do) on an R 4.2 insulated air
+ * pad. The sleep tab's controls replace it; it is state, not a constant, from there on.
  */
 export const SLEEP_GEAR: SleepGear = {
   bag: { kind: 'bag', ratingC: fahrenheitToCelsius(20), ratingType: 'limit' },
   pads: [{ imperialR: 4.2, label: 'insulated air pad' }],
 };
 
+/**
+ * Which temperature the label states. **Required, never guessed** (`BagSpec.ratingType`): US
+ * brands label by the limit, EU brands by the comfort, and one real bag is "12 °F" and "23 °F"
+ * at once depending on which. The control offers exactly these two and no "unknown".
+ */
+export const RATING_TYPE_OPTIONS: readonly { readonly value: LabelRatingType; readonly label: string; readonly hint: string }[] = [
+  { value: 'limit', label: 'US label: limit rating', hint: 'The number US brands print: ISO 23537 T_lim, the standard man curled up, not yet shivering.' },
+  { value: 'comfort', label: 'EU label: comfort rating', hint: 'The number EU brands print: ISO 23537 T_comf, the standard woman relaxed and comfortable.' },
+];
+
+/** The quilt label corrections the engine knows, with the °F each adds, read from the engine's table. */
+export const QUILT_PROVENANCE_OPTIONS: readonly { readonly value: QuiltProvenance; readonly label: string }[] = (
+  Object.keys(QUILT_LABEL_CORRECTION_K) as QuiltProvenance[]
+).map((value) => {
+  const addedF = Math.round((QUILT_LABEL_CORRECTION_K[value] * 9) / 5);
+  const who = value === 'none' ? 'As printed, no correction' : value === 'cottage' ? 'Cottage maker' : 'Direct import';
+  return { value, label: addedF === 0 ? who : `${who}: label read ${addedF} °F warmer` };
+});
+
+/** A pad added to the stack starts at this R until the user types the hangtag's number. */
+export const NEW_PAD: PadSpec = { imperialR: 2, label: 'second pad' };
+
 /** The sleep gear as this tab's settings make it: the bag opened as a blanket loses its hood and collar. */
-export function sleepGearFor(settings: PhaseSettings): SleepGear {
-  const bag: BagSpec = settings.asBlanket ? { ...SLEEP_GEAR.bag, hoodUsed: false, draftCollar: false } : SLEEP_GEAR.bag;
-  return { bag, pads: SLEEP_GEAR.pads };
+export function sleepGearFor(settings: PhaseSettings, gear: SleepGear = SLEEP_GEAR): SleepGear {
+  const bag: BagSpec = settings.asBlanket ? { ...gear.bag, hoodUsed: false, draftCollar: false } : gear.bag;
+  return { bag, pads: gear.pads };
 }
 
 /**
@@ -209,7 +243,7 @@ export interface PanelResult {
 export function assessPhase(phase: PhaseName, inputs: PanelInputs, weather: PhaseWeather): PanelResult {
   const s = inputs.settings;
   const controls = PHASE_CONTROLS[phase];
-  const gear: GearInventory = { garments: kitGarments(inputs.kit), sleep: sleepGearFor(s) };
+  const gear: GearInventory = { garments: kitGarments(inputs.kit), sleep: sleepGearFor(s, inputs.sleepGear) };
 
   const plan: PhasePlan = {
     phase,
@@ -258,8 +292,8 @@ export interface SleepSystemView {
   readonly ventHeadroomK: number;
 }
 
-export function sleepSystemView(settings: PhaseSettings): SleepSystemView {
-  const gear = sleepGearFor(settings);
+export function sleepSystemView(settings: PhaseSettings, sleepGear: SleepGear = SLEEP_GEAR): SleepSystemView {
+  const gear = sleepGearFor(settings, sleepGear);
   const clo = clothingInsideClo(settings.wornInside);
   const input: SleepSystemInput = { bag: gear.bag, pads: gear.pads, ...(clo > 0 ? { clothingInsideClo: clo } : {}) };
   return {

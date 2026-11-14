@@ -30,11 +30,32 @@ export {
   sleepSystemView,
   DEFAULT_SETTINGS,
   PHASE_CONTROLS,
+  SLEEP_GEAR,
+  RATING_TYPE_OPTIONS,
+  QUILT_PROVENANCE_OPTIONS,
   type PanelInputs,
   type PanelResult,
   type PhaseSettings,
   type SleepSystemView,
 } from './model/panel.js';
+export {
+  anchorOf,
+  checkUnionBound,
+  encounterAxis,
+  kitColdLimitC,
+  kitWarmLimitC,
+  riskAt,
+  riskLevel,
+  AXIS_FLOOR_PROBABILITY,
+  TICK_MAX_COLD_RISK,
+  UNION_BOUND_TOLERANCE,
+  WARN_MAX_COLD_RISK,
+  type Anchor,
+  type RiskLevel,
+  type ScopeRisk,
+  type UnionBoundCheck,
+} from './model/risk.js';
+export { SleepSystemControls, type SleepSystemControlsProps } from './ui/SleepSystemControls.js';
 export { FIXTURE_PROVENANCE, FIXTURE_PLACE, FIXTURE_SPEC, PANEL_DATE, tripWeatherFrom, fixtureLoadedTrip } from './data/trip.js';
 export { fixtureTrip } from './data/fixture.js';
 export { loadLiveTrip, searchPlaces, withDemElevation, placeFromPin, placeFromResult, type LoadStep, type LoadOptions } from './data/live.js';

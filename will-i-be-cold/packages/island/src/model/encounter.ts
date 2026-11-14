@@ -37,6 +37,8 @@ export interface EncounterCurves {
   readonly encounter: readonly CurvePoint[];
   /** P(the phase's minimum is at or below T), same grid. Monotone, saturating. */
   readonly coldRisk: readonly CurvePoint[];
+  /** P(the phase's maximum is at or above T), same grid: the warm-end mirror of `coldRisk`. */
+  readonly warmRisk: readonly CurvePoint[];
   readonly source: 'measured';
   /**
    * How many nights were pooled. One for the per-night view. Pooling more nights widens the
@@ -79,13 +81,15 @@ export function encounterOf(dist: PhaseDistribution): EncounterCurves {
 function fromEncounterCurve(c: EncounterCurve): Omit<EncounterCurves, 'nights'> {
   const encounter: CurvePoint[] = [];
   const coldRisk: CurvePoint[] = [];
+  const warmRisk: CurvePoint[] = [];
   for (let i = 0; i < c.temperaturesC.length; i += 1) {
     const tC = c.temperaturesC[i];
     if (tC === undefined) continue;
     encounter.push({ tC, p: c.encounter[i] ?? 0 });
     coldRisk.push({ tC, p: c.coldRisk[i] ?? 0 });
+    warmRisk.push({ tC, p: c.warmRisk[i] ?? 0 });
   }
-  return { encounter, coldRisk, source: 'measured' };
+  return { encounter, coldRisk, warmRisk, source: 'measured' };
 }
 
 /** Linear interpolation on a curve; clamps to the ends outside the grid. */

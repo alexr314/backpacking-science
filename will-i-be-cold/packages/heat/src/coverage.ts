@@ -1264,7 +1264,7 @@ export function coverage(
   return {
     phases: phaseResults,
     gaps: allGaps,
-    verdict: oneSentenceVerdict(fmt, phaseResults, allGaps),
+    verdict: oneSentenceVerdict(fmt, phaseResults, allGaps, useMinMax ? 'min-max' : 'p10-p90'),
     warnings: dedupeWarnings(allWarnings),
     caveats: [...allCaveats],
     unverifiedConstants: UNVERIFIED_CONSTANTS,
@@ -1355,6 +1355,7 @@ function oneSentenceVerdict(
   fmt: TempFormat,
   phases: readonly PhaseCoverage[],
   gaps: readonly CoverageGap[],
+  band: 'p10-p90' | 'min-max',
 ): string {
   if (phases.length === 0) return 'Nothing assessed.';
   const advice = (gap: CoverageGap): string => gap.fix.short ?? gap.fix.text;
@@ -1411,5 +1412,12 @@ function oneSentenceVerdict(
       `${fmt.point(worst.fromC)} ${PHASE_LABEL[worst.phase]}. ${advice(worst)}`
     );
   }
-  return 'Your kit covers every phase, across the whole temperature range you expect.';
+  // Name the band that was actually checked. The default one is p10 to p90, so "the whole
+  // temperature range" overclaimed: a tail below p10 costs coverage nothing, and the chance of
+  // *dipping* below the kit's limit at some point in a multi-day trip is far higher than 10 %
+  // even when every phase is fully covered. Saying "the middle 80 %" lets that risk figure sit
+  // beside this sentence without the two contradicting each other.
+  return band === 'min-max'
+    ? 'Your kit covers every phase, across the whole temperature range you expect.'
+    : 'Your kit covers every phase, across the middle 80% of the temperatures you expect.';
 }

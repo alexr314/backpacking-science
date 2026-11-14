@@ -39,14 +39,33 @@
  * THE LIGHT LANGUAGE. The period's band is light spreading from the tube across the plot; a
  * gap is red light doing the same. The saturated marks are small (a hatched axis segment and
  * a badge), never a block.
+ *
+ * THE AXIS IS FIXED. The temperature scale is the trip's (`encounterAxis`: from the lowest
+ * temperature with at least a 2 % encounter probability to the highest, over every phase and
+ * scope), handed in as `axis`, so nothing slides between tabs and what moves is the data.
+ * Anything outside it is clamped to the edge. The curve itself tweens between tabs the way
+ * the scene does, on a common grid resampled over that fixed axis.
+ *
+ * THE MARK ON THE CURVE is at `anchorC`, the trip-wide comfort limit the headline's risk is
+ * quoted at, not at this scope's own limit (`model/risk.ts` says why). The bars still show
+ * this scope's limits.
+ *
+ * THE READOUT. Hovering anywhere over the chart reads the vertical position only: a dashed
+ * line runs across the whole element, the temperature is printed just above it where it
+ * crosses the stem, and where it crosses the curve a perpendicular drops to the probability
+ * axis with the percentage at its foot. The same readout has a keyboard: the curve is a
+ * vertical slider (arrows step a degree, Page keys five, Home and End the ends) and announces
+ * both numbers.
  */
 
 import type { JSX } from 'preact';
-import { useState } from 'preact/hooks';
+import { useMemo, useRef, useState } from 'preact/hooks';
 import type { CandidateEnsemble, CoverageGap, GapSeverity, PhaseCoverage, Span, Verdict } from '@will-i-be-cold/heat';
 import type { Distribution } from '@will-i-be-cold/weather';
 import { formatClo, formatTempPlain, toUnit, UNIT_SYMBOL, type Unit } from '../lib/units.js';
+import { useTween } from '../lib/useTween.js';
 import { curveAt, type EncounterCurves } from '../model/encounter.js';
+import type { RiskLevel } from '../model/risk.js';
 
 const CLO_RAMP = ['var(--clo-1)', 'var(--clo-2)', 'var(--clo-3)', 'var(--clo-4)', 'var(--clo-5)'];
 
@@ -108,6 +127,17 @@ export function gapMark(gaps: readonly CoverageGap[]): { glyph: string; colour: 
 }
 
 /**
+ * The headline's mark, by probability rather than by band coverage: the tick only while the
+ * chance of colder than the kit handles is small (`TICK_MAX_COLD_RISK`), then the caution
+ * token, then the critical one. Same tokens as the gaps so one legend serves.
+ */
+export const RISK_GLYPH: Readonly<Record<RiskLevel, string>> = { fine: '✓', marginal: '~', cold: '!' };
+export const RISK_COLOR: Readonly<Record<RiskLevel, string>> = { fine: 'var(--good)', marginal: 'var(--warning)', cold: 'var(--critical)' };
+export function riskMark(level: RiskLevel): { glyph: string; colour: string } {
+  return { glyph: RISK_GLYPH[level], colour: RISK_COLOR[level] };
+}
+
+/**
  * The absolute scale, as [°F, colour] anchors. Icy, blue, green near 70, yellow near 80, a
  * desaturated dark red/pink only at 90 to 100. The chroma falls off at the top on purpose.
  */
@@ -134,6 +164,13 @@ const BULB_R = 17;
 const PAD_R = 12;
 const BAR_W = 16;
 const BAR_GAP = 9;
+/** The curve walks between tabs in the scene's own time. */
+const CURVE_MS = 1500;
+/** Samples of the curve on the fixed axis, for the tween: one every half degree or so at the fixture's span. */
+const CURVE_SAMPLES = 121;
+
+const lerpCurve = (a: readonly number[], b: readonly number[], u: number): readonly number[] => a.map((v, i) => v + ((b[i] ?? v) - v) * u);
+const sameCurve = (a: readonly number[], b: readonly number[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
 
 /** Nice tick steps in the *display* unit. */
 function tickStep(spanInUnit: number, unit: Unit): number {
@@ -215,6 +252,10 @@ export interface ChartProps {
   /** The period's air temperature, for the median line and the p10 to p90 bracket. */
   readonly temperature: Distribution;
   readonly curves: EncounterCurves;
+  /** The fixed temperature axis, °C, the same on every tab (`encounterAxis`). */
+  readonly axis: Span;
+  /** The trip-wide comfort limit the risk is quoted at, °C; the mark on the curve. `null` when nothing could be built. */
+  readonly anchorC: number | null;
   readonly selectedId: string | null;
   readonly onSelect: (id: string | null) => void;
   /** The bar under the pointer or holding focus, as it changes, so the scene can dress the figure in it. */
@@ -250,6 +291,8 @@ export function ComfortChart({
   gaps,
   temperature,
   curves,
+  axis,
+  anchorC,
   selectedId,
   onSelect,
   onHover,
@@ -260,6 +303,9 @@ export function ComfortChart({
   uid,
 }: ChartProps): JSX.Element {
   const [hoverId, setHoverIdState] = useState<string | null>(null);
+  /** The readout's temperature, °C, and whether the pointer or the keyboard put it there. */
+  const [readout, setReadout] = useState<{ readonly tC: number; readonly via: 'pointer' | 'key' } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const setHoverId = (id: string | null): void => {
     setHoverIdState(id);
     onHover?.(id);
@@ -275,16 +321,12 @@ export function ComfortChart({
   const plotBottom = height - FOOT;
   const bulbY = plotBottom + 8 + BULB_R;
 
-  // --- domain ------------------------------------------------------------------------
+  // --- domain: the trip's fixed axis, so the scale never moves between tabs ----------------
   const colds = series.map((s) => s.coldLimitC);
-  const warms = series.map((s) => s.warmLimitC ?? s.coldLimitC + 7);
-  const belows = series.flatMap((s) => (s.below === undefined ? [] : [s.below.limitC]));
-  const rawLo = Math.max(-34.4, Math.min(band.fromC, ...colds, ...belows));
-  const rawHi = Math.min(43.3, Math.max(band.toC, ...warms));
-  const pad = Math.max(1, (rawHi - rawLo) * 0.07);
-  const loC = rawLo - pad;
-  const hiC = rawHi + pad;
+  const loC = axis.fromC;
+  const hiC = axis.toC;
   const y = (c: number): number => plotBottom - ((c - loC) / (hiC - loC)) * (plotBottom - plotTop);
+  const cOfY = (yPx: number): number => loC + ((plotBottom - yPx) / (plotBottom - plotTop)) * (hiC - loC);
   const clampY = (v: number): number => Math.min(plotBottom, Math.max(plotTop, v));
   const fToC = (f: number): number => ((f - 32) * 5) / 9;
 
@@ -335,20 +377,63 @@ export function ComfortChart({
 
   // --- the encounter curve, in the plot's y and its own x, reading outward ---------------
   const px = (p: number): number => curveR - Math.max(0, Math.min(1, p)) * CURVE_W;
-  const curvePts = curves.encounter.filter((pt) => pt.tC >= loC && pt.tC <= hiC);
-  const curvePath =
-    curvePts.length === 0
-      ? ''
-      : curvePts.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${px(pt.p).toFixed(1)} ${y(pt.tC).toFixed(1)}`).join(' ');
-  const areaPath =
-    curvePts.length === 0
-      ? ''
-      : `${curvePath} L ${curveR} ${y(curvePts[curvePts.length - 1]!.tC).toFixed(1)} L ${curveR} ${y(curvePts[0]!.tC).toFixed(1)} Z`;
-  // where the warmest outfit runs out, and the chance of it getting colder than that
-  const runsOut = bars.length > 0 && Number.isFinite(warmestCold) && warmestCold > loC && warmestCold < hiC;
-  const colderP = runsOut ? curveAt(curves.coldRisk, warmestCold) : 0;
+  // resampled on the fixed axis so two tabs' curves share a grid and can be walked between
+  const sampleC = (i: number): number => loC + ((hiC - loC) * i) / (CURVE_SAMPLES - 1);
+  const targetCurve = useMemo(
+    () => Array.from({ length: CURVE_SAMPLES }, (_, i) => curveAt(curves.encounter, loC + ((hiC - loC) * i) / (CURVE_SAMPLES - 1))),
+    [curves, loC, hiC],
+  );
+  const drawn = useTween(targetCurve, lerpCurve, CURVE_MS, sameCurve);
+  const curvePath = drawn.map((p, i) => `${i === 0 ? 'M' : 'L'} ${px(p).toFixed(1)} ${y(sampleC(i)).toFixed(1)}`).join(' ');
+  const areaPath = `${curvePath} L ${curveR} ${y(hiC).toFixed(1)} L ${curveR} ${y(loC).toFixed(1)} Z`;
+  // the trip-wide limit the risk is quoted at, and the chance of colder than it on this scope's curve
+  const runsOut = anchorC !== null;
+  const anchorY = anchorC === null ? 0 : clampY(y(anchorC));
+  const colderP = anchorC === null ? 0 : curveAt(curves.coldRisk, anchorC);
   const colderPct = Math.round(colderP * 100);
   const curveAxisY = plotBottom + 14;
+
+  // --- the readout: vertical position only -------------------------------------------------
+  const stepU = 1; // one display degree per arrow press
+  const onMove = (e: MouseEvent): void => {
+    const svg = svgRef.current;
+    if (svg === null) return;
+    const r = svg.getBoundingClientRect();
+    const yPx = ((e.clientY - r.top) * height) / r.height;
+    if (yPx < plotTop || yPx > plotBottom) {
+      if (readout?.via === 'pointer') setReadout(null);
+      return;
+    }
+    setReadout({ tC: cOfY(yPx), via: 'pointer' });
+  };
+  const onLeave = (): void => {
+    if (readout?.via === 'pointer') setReadout(null);
+  };
+  const moveReadout = (deltaU: number, to?: number): void => {
+    const fromC = readout?.tC ?? temperature.p50;
+    const nextU = to ?? toUnit(fromC, unit) + deltaU;
+    const nextC = Math.min(hiC, Math.max(loC, unit === 'F' ? fToC(nextU) : nextU));
+    setReadout({ tC: nextC, via: 'key' });
+  };
+  const onSliderKey = (e: KeyboardEvent): void => {
+    const k = e.key;
+    if (k === 'ArrowUp' || k === 'ArrowRight') moveReadout(stepU);
+    else if (k === 'ArrowDown' || k === 'ArrowLeft') moveReadout(-stepU);
+    else if (k === 'PageUp') moveReadout(5 * stepU);
+    else if (k === 'PageDown') moveReadout(-5 * stepU);
+    else if (k === 'Home') moveReadout(0, toUnit(loC, unit));
+    else if (k === 'End') moveReadout(0, toUnit(hiC, unit));
+    else if (k === 'Escape') setReadout(null);
+    else return;
+    e.preventDefault();
+  };
+  const readoutP = readout === null ? null : curveAt(curves.encounter, readout.tC);
+  const readoutText =
+    readout === null || readoutP === null
+      ? `Sweep the curve with the arrow keys to read the chance of each temperature ${period}.`
+      : `${formatTempPlain(readout.tC, unit)} ${UNIT_SYMBOL[unit]}: ${Math.round(readoutP * 100)}% chance you will see it ${period}; ${Math.round(
+          curveAt(curves.coldRisk, readout.tC) * 100,
+        )}% chance of colder.`;
 
   // The absolute scale's stops, placed in user space so the gradient moves with the axis.
   const scaleTopY = y(fToC(SCALE_STOPS[SCALE_STOPS.length - 1]![0]));
@@ -357,19 +442,18 @@ export function ComfortChart({
   const tubeBottom = bulbY - BULB_R + 6;
 
   const curveDescription =
-    `Chance you will see each temperature ${period}, from ${formatTempPlain(curvePts[0]?.tC ?? loC, unit)} to ${formatTempPlain(
-      curvePts[curvePts.length - 1]?.tC ?? hiC,
-      unit,
-    )} ${UNIT_SYMBOL[unit]}; near certain across the expected band.` +
-    (runsOut
-      ? ` Your warmest option runs out at ${formatTempPlain(warmestCold, unit)} ${UNIT_SYMBOL[unit]}, with a ${colderPct}% chance of colder.`
+    `Chance you will see each temperature ${period}, on a scale from ${formatTempPlain(loC, unit)} to ${formatTempPlain(hiC, unit)} ${
+      UNIT_SYMBOL[unit]
+    } that is the same on every tab; near certain across the expected band.` +
+    (anchorC !== null
+      ? ` Measured at the trip-wide limit of ${formatTempPlain(anchorC, unit)} ${UNIT_SYMBOL[unit]}, there is a ${colderPct}% chance of colder.`
       : '');
 
   const deltaBars = delta === undefined ? null : { a: bars.find((b) => b.series.id === delta.fromId), b: bars.find((b) => b.series.id === delta.toId) };
 
   return (
     <div className="wibc-chart" style={{ position: 'relative', width: `${width}px` }}>
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="presentation">
+      <svg ref={svgRef} width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="presentation" onMouseMove={onMove} onMouseLeave={onLeave}>
         <defs>
           <linearGradient id={`${uid}-scale`} gradientUnits="userSpaceOnUse" x1="0" y1={scaleBottomY} x2="0" y2={scaleTopY}>
             {SCALE_STOPS.map(([f, colour]) => (
@@ -499,10 +583,8 @@ export function ComfortChart({
             SEE IT
           </text>
           <g clip-path={`url(#${uid}-plot-clip)`}>
-            {areaPath !== '' && <path d={areaPath} fill={`url(#${uid}-curvefill)`} />}
-            {curvePath !== '' && (
-              <path d={curvePath} fill="none" stroke="#f5f2ea" stroke-opacity="0.85" stroke-width="1.6" stroke-linejoin="round" />
-            )}
+            <path d={areaPath} fill={`url(#${uid}-curvefill)`} />
+            <path d={curvePath} fill="none" stroke="#f5f2ea" stroke-opacity="0.85" stroke-width="1.6" stroke-linejoin="round" />
           </g>
           {/* the p10 to p90 interval, as a bracket on the p = 1 line */}
           <line x1={CURVE_L - 3} y1={bandY0} x2={CURVE_L - 3} y2={bandY1} stroke="var(--ink-2)" stroke-width="1" />
@@ -521,27 +603,22 @@ export function ComfortChart({
           ).map(([p, label]) => (
             <g key={label}>
               <line x1={px(p)} y1={curveAxisY} x2={px(p)} y2={curveAxisY + 4} stroke="var(--axis)" stroke-width="1" shape-rendering="crispEdges" />
-              <text x={px(p)} y={curveAxisY + 15} text-anchor={p === 1 ? 'start' : p === 0 ? 'end' : 'middle'} font-size="9.5" fill="var(--ink-3)">
-                {label}
-              </text>
+              {/* a tick label yields to the readout's percentage when that lands on it */}
+              {(readoutP === null || Math.abs(px(readoutP) - px(p)) > 22) && (
+                <text x={px(p)} y={curveAxisY + 15} text-anchor={p === 1 ? 'start' : p === 0 ? 'end' : 'middle'} font-size="9.5" fill="var(--ink-3)">
+                  {label}
+                </text>
+              )}
             </g>
           ))}
           {/* where your warmest option runs out: the chance of colder than that, read off the cold limb */}
           {runsOut && (
             <g>
-              <line
-                x1={CURVE_L - 8}
-                y1={y(warmestCold)}
-                x2={curveR}
-                y2={y(warmestCold)}
-                stroke="var(--ink-2)"
-                stroke-width="1"
-                stroke-dasharray="2 3"
-              />
-              <circle cx={px(colderP)} cy={y(warmestCold)} r="3.5" fill="var(--chart-ground)" stroke="var(--ink)" stroke-width="1.5" />
+              <line x1={CURVE_L - 8} y1={anchorY} x2={curveR} y2={anchorY} stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="2 3" />
+              <circle cx={px(colderP)} cy={anchorY} r="3.5" fill="var(--chart-ground)" stroke="var(--ink)" stroke-width="1.5" />
               <text
                 x={Math.max(px(colderP) - 8, CURVE_L + 2)}
-                y={y(warmestCold) + (colderP > 0.5 ? 14 : -7)}
+                y={anchorY + (colderP > 0.5 ? 14 : -7)}
                 text-anchor={colderP > 0.6 ? 'start' : 'end'}
                 font-size="11"
                 font-weight="700"
@@ -554,6 +631,31 @@ export function ComfortChart({
               </text>
             </g>
           )}
+          {/* the keyboard's way onto the readout: the curve as a vertical slider */}
+          <rect
+            className="wibc-curve-slider"
+            x={CURVE_L - 8}
+            y={plotTop}
+            width={CURVE_W + 8}
+            height={plotBottom - plotTop}
+            rx="6"
+            fill="transparent"
+            tabIndex={0}
+            role="slider"
+            aria-label={`Read the curve: chance you will see each temperature ${period}`}
+            aria-orientation="vertical"
+            aria-valuemin={Math.round(toUnit(loC, unit))}
+            aria-valuemax={Math.round(toUnit(hiC, unit))}
+            aria-valuenow={Math.round(toUnit(readout?.tC ?? temperature.p50, unit))}
+            aria-valuetext={readoutText}
+            onKeyDown={onSliderKey}
+            onFocus={() => {
+              if (readout === null) setReadout({ tC: temperature.p50, via: 'key' });
+            }}
+            onBlur={() => {
+              if (readout?.via === 'key') setReadout(null);
+            }}
+          />
         </g>
 
         {/* one bar per series; its name on hover, its foot label below */}
@@ -812,7 +914,57 @@ export function ComfortChart({
         <text x={plotL} y={height - 8} font-size="10.5" fill="var(--ink-3)" letter-spacing="0.08em">
           {footCaption}
         </text>
+
+        {/* THE READOUT: one horizontal line through everything, the temperature at the stem, the chance at the foot of the curve */}
+        {readout !== null && readoutP !== null && (
+          <g style={{ pointerEvents: 'none' }} aria-hidden="true">
+            {(() => {
+              const ry = y(readout.tC);
+              const rx = px(readoutP);
+              return (
+                <>
+                  <line x1={CURVE_L - 8} y1={ry} x2={plotR} y2={ry} stroke="var(--ink)" stroke-opacity="0.75" stroke-width="1" stroke-dasharray="4 3" />
+                  <text
+                    x={tubeX - TUBE_W / 2}
+                    y={ry - 5}
+                    font-size="11.5"
+                    font-weight="700"
+                    fill="var(--ink)"
+                    stroke="var(--chart-ground)"
+                    stroke-width="3.5"
+                    paint-order="stroke"
+                    stroke-linejoin="round"
+                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {formatTempPlain(readout.tC, unit)} {UNIT_SYMBOL[unit]}
+                  </text>
+                  <circle cx={rx} cy={ry} r="3" fill="var(--ink)" />
+                  <line x1={rx} y1={ry} x2={rx} y2={curveAxisY} stroke="var(--ink)" stroke-opacity="0.75" stroke-width="1" stroke-dasharray="4 3" />
+                  <circle cx={rx} cy={curveAxisY} r="2.5" fill="var(--ink)" />
+                  <text
+                    x={rx}
+                    y={curveAxisY + 15}
+                    text-anchor="middle"
+                    font-size="11"
+                    font-weight="700"
+                    fill="var(--ink)"
+                    stroke="var(--chart-ground)"
+                    stroke-width="3.5"
+                    paint-order="stroke"
+                    stroke-linejoin="round"
+                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {Math.round(readoutP * 100)}%
+                  </text>
+                </>
+              );
+            })()}
+          </g>
+        )}
       </svg>
+      <p className="wibc-sr-only" role="status">
+        {readout?.via === 'key' ? readoutText : ''}
+      </p>
 
       {activeBar !== null && <Tooltip bar={activeBar} width={width} bandY0={bandY0} plotBottom={plotBottom} />}
     </div>

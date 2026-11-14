@@ -46,7 +46,7 @@
 import type { JSX } from 'preact';
 import { useMemo, useRef } from 'preact/hooks';
 import type { Verdict } from '@will-i-be-cold/heat';
-import { Figure, GEOMETRY, lerpGeometry, poseFacts, specOf, type Pose, type PoseGeometry } from './Figure.js';
+import { Figure, GEOMETRY, GETTING_DOWN, lerpGeometry, poseFacts, specOf, type Pose, type PoseGeometry } from './Figure.js';
 import { Fire } from './Fire.js';
 import { SKY_STOP_FRACTIONS, STARS, lerpProgress, overcastAt, skyAt } from './Sky.js';
 import type { Outfit, Region } from '../model/kit.js';
@@ -327,7 +327,7 @@ interface Live {
 
 const ln = (a: number, b: number, u: number): number => a + (b - a) * u;
 
-function lerpLive(a: Live, b: Live, u: number): Live {
+function blendLive(a: Live, b: Live, u: number): Live {
   return {
     p: lerpProgress(a.p, b.p, u),
     geometry: lerpGeometry(a.geometry, b.geometry, u),
@@ -361,6 +361,121 @@ function sameLive(a: Live, b: Live): boolean {
     a.pole === b.pole &&
     a.overcast === b.overcast
   );
+}
+
+/**
+ * GETTING DOWN TO THE MAT, AND BACK UP.
+ *
+ * Lying down used to be one lerp: the seated figure morphing into the standing one turned on
+ * its side, which the client rightly called "just sort of morphs". The real motion is a
+ * sequence (`GETTING_DOWN` in `Figure.tsx`, where the poses and his description of them live),
+ * so the walk between those two targets passes through three fixed stops instead of going
+ * straight. Each leg is still an ordinary `blendLive`, which is what keeps the garment art,
+ * the props and the sky coming along: only the path through the space changed, not the space.
+ *
+ * Non-geometric fields (the fire, the log, the bag, the sun) are not pinned at the stops. A
+ * stop takes them at its own fraction of the motion, so they still run smoothly end to end
+ * while the body takes the scenic route.
+ */
+interface DownStop {
+  readonly geometry: PoseGeometry;
+  readonly fx: number;
+  readonly fy: number;
+  readonly scale: number;
+  /** Fraction of the whole motion spent reaching this stop from the one before. */
+  readonly w: number;
+}
+
+/**
+ * Where each stop stands: a frame fraction for its centre, its scale against the seated
+ * figure's, and the local y that must sit on the ground (the seated frame's bottom for the
+ * one still on the log, the upright frame's ground line for the two on their knees).
+ */
+const DOWN_STOPS: readonly { readonly cx: number; readonly k: number; readonly baseY: number }[] = [
+  { cx: 0.42, k: 1.0, baseY: 380 },
+  { cx: 0.33, k: 0.88, baseY: 470 },
+  { cx: 0.26, k: 0.82, baseY: 470 },
+];
+
+/**
+ * The four legs: turn, down onto the knees, reach the hand to the ground, fold out flat. The
+ * turn is quick and the two that carry weight are slow, which is how the motion actually goes.
+ */
+const DOWN_LEGS: readonly number[] = [0.16, 0.3, 0.24, 0.3];
+
+/** The stops for a move onto the mat or off it, already placed; empty when neither end is lying. */
+function downRoute(from: Pose, to: Pose, world: World): readonly DownStop[] {
+  const down = to === 'lying' && from !== 'lying';
+  const up = from === 'lying' && to !== 'lying';
+  if (!down && !up) return [];
+  const { sx, groundY, unit, narrow } = world;
+  const s = (unit * (narrow ? 0.56 : 0.62)) / GEOMETRY.seated.h;
+  const order = down ? [0, 1, 2] : [2, 1, 0];
+  // the weight of the leg arriving at each stop: read forwards going down, backwards coming up
+  const weights = down ? [DOWN_LEGS[0]!, DOWN_LEGS[1]!, DOWN_LEGS[2]!] : [DOWN_LEGS[3]!, DOWN_LEGS[2]!, DOWN_LEGS[1]!];
+  return order.map((i, n) => {
+    const stop = DOWN_STOPS[i]!;
+    const scale = s * stop.k;
+    return {
+      geometry: GETTING_DOWN[i]!,
+      fx: sx(stop.cx) - 150 * scale,
+      fy: groundY - stop.baseY * scale,
+      scale,
+      w: weights[n]!,
+    };
+  });
+}
+
+/** A field that runs on its own schedule: 0 before `from`, 1 after `to`, smooth between. */
+function ramp(u: number, from: number, to: number): number {
+  const t = Math.min(1, Math.max(0, (u - from) / (to - from)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Two props do not belong on the body's clock, and the order they take is the order a person
+ * does them in. Going down, the log goes early (you are off it as soon as you turn and kneel)
+ * and the bag comes late (it is what you get into once you are flat). Getting up, both
+ * reverse: the bag comes off first, and the log is there to sit on at the end.
+ *
+ * Left on the straight blend, going down the bag faded in over the middle of the motion and
+ * covered the whole descent, so the choreography was invisible: it looked from the outside
+ * exactly like the morph it replaced. Getting up, the bag stayed on to the end and swung
+ * upright with the figure, which is worse than either.
+ */
+const EARLY: readonly [number, number] = [0, 0.2];
+const LATE: readonly [number, number] = [0.76, 1];
+
+/** `a` at u = 0 and `b` at u = 1, by way of the route; with no stops, the plain blend. */
+function lerpAlong(route: { readonly down: boolean; readonly stops: readonly DownStop[] }, a: Live, b: Live, u: number): Live {
+  const { down, stops } = route;
+  if (stops.length === 0) return blendLive(a, b, u);
+  if (u <= 0) return a;
+  if (u >= 1) return b;
+  const logAt = down ? EARLY : LATE;
+  const bagAt = down ? LATE : EARLY;
+  const scheduled = (v: Live): Live => ({
+    ...v,
+    log: ln(a.log, b.log, ramp(u, logAt[0], logAt[1])),
+    bag: ln(a.bag, b.bag, ramp(u, bagAt[0], bagAt[1])),
+  });
+  const legs = [...stops.map((st) => st.w), Math.max(0.05, 1 - stops.reduce((t, st) => t + st.w, 0))];
+  const total = legs.reduce((t, x) => t + x, 0);
+  let acc = 0;
+  for (let i = 0; i < legs.length; i += 1) {
+    const seg = legs[i]! / total;
+    const last = i === legs.length - 1;
+    if (u <= acc + seg || last) {
+      const t = seg <= 0 ? 1 : Math.min(1, (u - acc) / seg);
+      // a stop's own Live: the stop's body, everything else taken at the stop's point in the motion
+      const at = (st: DownStop, f: number): Live => ({ ...blendLive(a, b, f), geometry: st.geometry, fx: st.fx, fy: st.fy, scale: st.scale, angle: 0 });
+      const prev = i === 0 ? a : at(stops[i - 1]!, acc);
+      const next = last ? b : at(stops[i]!, acc + seg);
+      return scheduled(blendLive(prev, next, t));
+    }
+    acc += seg;
+  }
+  return b;
 }
 
 /** The stage's fixed frame for the little scene: where the figure, the fire and the clearing are. */
@@ -398,6 +513,8 @@ function placement(pose: Pose, world: World): { fx: number; fy: number; scale: n
 
 const GLOW_MS = 3600;
 const SCENE_MS = 1500;
+/** Getting down to the mat is four legs, not one, so it is given the time to read as a motion. */
+const GET_DOWN_MS = 2800;
 const lerpGlow = (a: number, b: number, u: number): number => ln(a, b, u);
 const sameN = (a: number, b: number): boolean => a === b;
 
@@ -447,8 +564,28 @@ export function Scene(props: SceneProps): JSX.Element {
   // a new tab target walks; a re-measured cell (the same target, moved) retargets the walk in flight or snaps at rest
   const lastTarget = useRef(target);
   const walk = lastTarget.current !== target;
+  const fromPose = lastTarget.current.pose;
   lastTarget.current = target;
-  const live = useTween(liveTarget, lerpLive, walk ? SCENE_MS : 0, sameLive);
+  /**
+   * The path this walk takes. Only a move onto the mat or off it has stops; everything else is
+   * the straight blend it always was.
+   *
+   * IT HAS TO OUTLIVE THE RENDER THAT STARTED IT. The cell is re-measured a frame after a tab
+   * change, which hands `useTween` a new value and re-fires its effect with *this* render's
+   * lerp. Held in a local, the route was already empty by then and the straight blend quietly
+   * took the walk back over: the stops were built correctly and never reached the screen. In a
+   * ref it survives, and the retarget keeps the original clock. The placements are rebuilt on
+   * those renders because the re-measure is exactly when the world has moved under them.
+   */
+  const routeRef = useRef<{ from: Pose; to: Pose; down: boolean; stops: readonly DownStop[] }>({ from: target.pose, to: target.pose, down: true, stops: [] });
+  if (walk) {
+    routeRef.current = { from: fromPose, to: target.pose, down: target.pose === 'lying', stops: downRoute(fromPose, target.pose, world) };
+  } else if (routeRef.current.stops.length > 0) {
+    routeRef.current = { ...routeRef.current, stops: downRoute(routeRef.current.from, routeRef.current.to, world) };
+  }
+  const lerpRouted = (a: Live, b: Live, u: number): Live => lerpAlong(routeRef.current, a, b, u);
+  const ms = routeRef.current.stops.length > 0 ? GET_DOWN_MS : SCENE_MS;
+  const live = useTween(liveTarget, lerpRouted, walk ? ms : 0, sameLive);
   const glow = useTween(target.lit && target.hearth > 0.5 ? 1 : 0, lerpGlow, GLOW_MS, sameN);
 
   const sky = overcastAt(skyAt(live.p), live.overcast);

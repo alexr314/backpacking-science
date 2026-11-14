@@ -10,6 +10,16 @@
  * Every number on screen arrives from `coverage()`, from `solveSleepSystem()` or from the
  * weather sampler. The tab computes no physics of its own.
  *
+ * ONE THRESHOLD PER PHASE. The headline is a probability (the chance you are comfortable, and
+ * its complement, the chance of colder than the kit handles), and it is read at the trip-wide
+ * comfort limit whichever scope is on screen, so the whole trip and each of its nights are
+ * comparable and obey the union bound (`model/risk.ts`). This scope's own limit, which moves
+ * with its wind and sky, is stated beneath as the secondary fact it is.
+ *
+ * THE SLEEP SYSTEM IS SET HERE. The bag and the pads are the sleep tab's own controls
+ * (`SleepSystemControls.tsx`), a row above the conditions, so the two-floor diagram and the
+ * pad delta move as you change them.
+ *
  * WHAT DIFFERS PER PHASE is a value, not a branch: the scene's target (`model/tabs.ts`), the
  * words for the period, the controls on offer (`PHASE_CONTROLS`), and which series stand on
  * the thermometer. The four clothed phases put the engine's candidate ladder there. Sleep is
@@ -34,24 +44,28 @@
 import type { JSX } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { OPEN_METEO_LICENCE_URL, type DayWeather, type PhaseWeather } from '@will-i-be-cold/weather';
-import { verdictFrom, type PhaseName, type ShelterKind } from '@will-i-be-cold/heat';
+import { verdictFrom, type PhaseName, type ShelterKind, type SleepGear, type Span } from '@will-i-be-cold/heat';
 import { useBoxWithin, useMeasure } from '../lib/useMeasure.js';
 import { headline, plain } from '../lib/prose.js';
 import { clockOf, formatDateSpan, formatDelta, formatLongDate, formatShortDate, formatTempPlain, UNIT_SYMBOL, type Unit } from '../lib/units.js';
 import { kitFromGarments, slotGarments, type Kit, type Outfit } from '../model/kit.js';
-import { curveAt, type EncounterCurves } from '../model/encounter.js';
+import type { EncounterCurves } from '../model/encounter.js';
 import { ACTIVITY_LABEL, PHASE_CONTROLS, sleepSystemView, type Activity, type PanelResult, type PhaseSettings } from '../model/panel.js';
+import { kitColdLimitC, riskLevel, type Anchor, type ScopeRisk } from '../model/risk.js';
 import { phaseTab, voiceFor } from '../model/tabs.js';
 import type { LoadedTrip, NightScope } from '../model/trip.js';
 import { Scene, type SceneAnnotation, type SceneTarget } from './Scene.js';
-import { candidateSeries, ComfortChart, gapMark, GAP_GLYPH, VERDICT_COLOR, VERDICT_ICON, VERDICT_WORD, type ChartSeries } from './ComfortChart.js';
+import { candidateSeries, ComfortChart, GAP_GLYPH, riskMark, VERDICT_COLOR, VERDICT_ICON, VERDICT_WORD, type ChartSeries } from './ComfortChart.js';
 import { SleepFloors } from './SleepFloors.js';
+import { SleepSystemControls } from './SleepSystemControls.js';
 
 /** The stage's height on a desktop: enough for the thermometer to stand inside the landscape. */
 const STAGE_H = 800;
-/** Top of the chart below the floating tab bar, and the settings row's share of the bottom. */
+/** Top of the chart below the floating tab bar, and the least the settings rows take of the bottom. */
 const CHART_TOP = 76;
 const CHART_BOTTOM = 84;
+/** Air between the chart's foot and the settings rows. */
+const CHART_SETTLE = 10;
 
 export interface PhaseTabProps {
   readonly phase: PhaseName;
@@ -72,6 +86,16 @@ export interface PhaseTabProps {
   readonly settings: PhaseSettings;
   readonly onSettings: (next: PhaseSettings) => void;
   readonly result: PanelResult;
+  /** The trip-wide comfort limits the risk is quoted at, from the pooled scope's result. */
+  readonly anchor: Anchor;
+  /** This scope's curves read at the anchor. */
+  readonly risk: ScopeRisk;
+  /** Every night's curves read at the same anchor, in trip order, for the pooled view's night-by-night line. */
+  readonly nightRisks: readonly ScopeRisk[];
+  /** The fixed thermometer axis, the same on every tab. */
+  readonly axis: Span;
+  readonly sleepGear: SleepGear;
+  readonly onSleepGear: (gear: SleepGear) => void;
   readonly onGoToGear: () => void;
   readonly onGoToTrip: () => void;
   readonly methodologyHref: string;
@@ -84,7 +108,7 @@ export interface PhaseTabProps {
 }
 
 export function PhaseTab(props: PhaseTabProps): JSX.Element {
-  const { phase: phaseName, loaded, days, scope, weather, curves, kit, outfit, unit, settings, result, uid } = props;
+  const { phase: phaseName, loaded, days, scope, weather, curves, kit, outfit, unit, settings, result, anchor, risk, nightRisks, sleepGear, uid } = props;
   const { report, phase } = result;
   const tab = phaseTab(phaseName);
   const controls = PHASE_CONTROLS[phaseName];
@@ -104,6 +128,9 @@ export function PhaseTab(props: PhaseTabProps): JSX.Element {
   // the little scene keeps to the tableau's middle-right cell; the landscape spans the stage
   const [sideRef, vignette] = useBoxWithin<HTMLDivElement, HTMLDivElement>(stageRef, { x: 560, y: 140, w: 700, h: 500 });
   const stageH = STAGE_H;
+  // the settings take one row, or two on the sleep tab; the chart gives way to them rather than standing over them
+  const [settingsRef, settingsBox] = useBoxWithin<HTMLDivElement, HTMLDivElement>(stageRef, { x: 0, y: stageH - CHART_BOTTOM, w: 0, h: CHART_BOTTOM });
+  const chartH = stageH - CHART_TOP - Math.max(CHART_BOTTOM, settingsBox.h + CHART_SETTLE);
 
   // what the figure wears: the bar under the pointer wins, then the clicked bar, then the warmest outfit
   const shownId = hoverBar ?? selectedBar;
@@ -111,7 +138,7 @@ export function PhaseTab(props: PhaseTabProps): JSX.Element {
   const sceneKit = useMemo(() => (shown === null ? outfit : kitFromGarments(shown.garments)), [shown, outfit]);
 
   // the sleep system, solved on your pad and on the label's own mat
-  const sleep = useMemo(() => (isSleep ? sleepSystemView(settings) : null), [isSleep, settings]);
+  const sleep = useMemo(() => (isSleep ? sleepSystemView(settings, sleepGear) : null), [isSleep, settings, sleepGear]);
 
   const series: ChartSeries[] = useMemo(() => {
     if (sleep === null) return candidateSeries(phase.candidates, unit);
@@ -165,15 +192,20 @@ export function PhaseTab(props: PhaseTabProps): JSX.Element {
     ];
   }, [sleep, phase, unit]);
 
-  const coveredPct = Math.round(phase.coveredFraction * 100);
   /** Conditions are the same for every candidate, so any one of them reports the environment. */
   const resolved = phase.best?.assessment.conditions ?? phase.candidates[0]?.assessment.conditions ?? null;
-  const mark = gapMark(phase.gaps);
 
-  // where the warmest thing you own runs out, and the chance of it getting colder than that
-  const colds = series.map((s) => s.coldLimitC);
-  const runsOutC = colds.length === 0 ? null : Math.min(...colds);
-  const colderPct = runsOutC === null ? null : Math.round(curveAt(curves.coldRisk, runsOutC) * 100);
+  // the headline: the chance you are comfortable, and the two tails it leaves, all at the trip-wide anchor
+  const comfortPct = Math.round(risk.comfortable * 100);
+  const colderPct = Math.round(risk.cold * 100);
+  const warmerPct = Math.round(risk.warm * 100);
+  const mark = riskMark(riskLevel(risk.cold));
+  const t = (c: number): string => `${formatTempPlain(c, unit)} ${UNIT_SYMBOL[unit]}`;
+  // this scope's own limit, which moves with its wind and sky; stated, but not what the risk is read at
+  const ownLimitC = kitColdLimitC(phase);
+  const ownDiffers = anchor.coldC !== null && ownLimitC !== null && Math.abs(ownLimitC - anchor.coldC) > 0.05;
+  const scopeNoun = phaseName === 'hiking' || phaseName === 'day_break' ? 'day' : 'night';
+  const kitNoun = isSleep ? 'your sleep system' : 'your kit';
 
   const verdict = headline(report.verdict, tab.enginePhrase);
   const fire = controls.campfire && settings.campfire;
@@ -231,13 +263,15 @@ export function PhaseTab(props: PhaseTabProps): JSX.Element {
               {isSleep ? `Where the sleep system is comfortable, against ${voice.period}` : `Where each outfit is comfortable, against ${voice.period}`}
             </h2>
             <ComfortChart
-              height={stageH - CHART_TOP - CHART_BOTTOM}
+              height={chartH}
               unit={unit}
               series={series}
               band={phase.band}
               gaps={phase.gaps}
               temperature={weather.temperature}
               curves={curves}
+              axis={props.axis}
+              anchorC={anchor.coldC}
               selectedId={selectedBar}
               onSelect={setSelectedBar}
               onHover={setHoverBar}
@@ -264,45 +298,83 @@ export function PhaseTab(props: PhaseTabProps): JSX.Element {
 
           <div className="wibc-tableau-top">
             <div className="wibc-findings-lead">
-              <p className="wibc-stat" aria-label={`${coveredPct} percent ${voice.share} covered`}>
+              <p className="wibc-stat" aria-label={`${comfortPct} percent likely to be comfortable ${voice.period}`}>
                 <span className="wibc-stat-value">
                   <span className="wibc-stat-mark" style={{ color: mark.colour }} aria-hidden="true">
                     {mark.glyph}
                   </span>
-                  {coveredPct}% covered
+                  {comfortPct}% comfortable
                 </span>
                 <span className="wibc-stat-label">
-                  of {formatTempPlain(phase.band.fromC, unit)}–{formatTempPlain(phase.band.toC, unit)} {UNIT_SYMBOL[unit]} by{' '}
-                  {isSleep ? 'your sleep system' : 'something you own'}
+                  {anchor.coldC === null ? (
+                    <>nothing you own could be assessed {voice.period}</>
+                  ) : (
+                    <>
+                      <b>{colderPct}% chance</b> it gets colder than {kitNoun} handles {voice.period}
+                      {warmerPct > 0 && (
+                        <>
+                          ; <b>{warmerPct}%</b> of warmer than {isSleep ? 'the bag vented' : 'your lightest outfit, fully open'}
+                        </>
+                      )}
+                    </>
+                  )}
                 </span>
               </p>
-              {sleep === null && runsOutC !== null && colderPct !== null && (
+              {sleep === null && anchor.coldC !== null && (
                 <p className="wibc-runs-out">
-                  Your warmest outfit runs out at{' '}
-                  <b>
-                    {formatTempPlain(runsOutC, unit)} {UNIT_SYMBOL[unit]}
-                  </b>
-                  , and there is a <b>{colderPct}% chance</b> of it getting colder than that {voice.period}.
+                  Your warmest outfit runs out at <b>{t(anchor.coldC)}</b> over the trip; every figure here is read at that one limit, so the
+                  nights compare.
+                  {scope.kind === 'trip' && nightRisks.length > 1 && (
+                    <>
+                      {' '}
+                      {scopeNoun === 'day' ? 'Day' : 'Night'} by {scopeNoun}, at that same limit:{' '}
+                      {nightRisks.map((r, i) => (
+                        <span key={i}>
+                          {i > 0 && ', '}
+                          <b>{Math.round(r.cold * 100)}%</b>
+                        </span>
+                      ))}
+                      .
+                    </>
+                  )}
+                  {scope.kind === 'night' && ownLimitC !== null && (
+                    <>
+                      {' '}
+                      {ownDiffers ? (
+                        <>
+                          This {scopeNoun}&rsquo;s own conditions (wind {weather.windSpeed.p50.toFixed(1)} m/s, {Math.round(weather.cloudCover * 100)}%
+                          cloud) take the same kit to <b>{t(ownLimitC)}</b>.
+                        </>
+                      ) : (
+                        <>This {scopeNoun}&rsquo;s own limit is the same.</>
+                      )}
+                    </>
+                  )}
                 </p>
               )}
-              {sleep !== null && colderPct !== null && (
+              {sleep !== null && anchor.coldC !== null && (
                 <p className="wibc-runs-out">
-                  The label says <b>{formatTempPlain(sleep.input.bag.ratingC, unit)} {UNIT_SYMBOL[unit]}</b>
+                  The label says <b>{t(sleep.input.bag.ratingC)}</b>
                   {sleep.input.bag.ratingType === 'limit' ? (
-                    <>
-                      , a US limit rating: on the mat in that rating it is comfortable down to{' '}
-                      <b>
-                        {formatTempPlain(sleep.onLabelMat.comfortC, unit)} {UNIT_SYMBOL[unit]}
-                      </b>
-                    </>
+                    <>, a US limit rating: on the mat in that rating it is comfortable down to <b>{t(sleep.onLabelMat.comfortC)}</b></>
                   ) : (
                     <>, its comfort rating on the mat in that rating</>
                   )}
-                  , and on your R {sleep.yours.padImperialR.toFixed(1)} pad to{' '}
-                  <b>
-                    {formatTempPlain(sleep.yours.comfortC, unit)} {UNIT_SYMBOL[unit]}
-                  </b>
-                  . There is a <b>{colderPct}% chance</b> of colder than that {voice.period}.
+                  , and on your R {sleep.yours.padImperialR.toFixed(1)} pad to <b>{t(sleep.yours.comfortC)}</b>. The risk above is read at{' '}
+                  <b>{t(anchor.coldC)}</b>, the trip-wide limit, on every night.
+                  {scope.kind === 'trip' && nightRisks.length > 1 && (
+                    <>
+                      {' '}
+                      Night by night:{' '}
+                      {nightRisks.map((r, i) => (
+                        <span key={i}>
+                          {i > 0 && ', '}
+                          <b>{Math.round(r.cold * 100)}%</b>
+                        </span>
+                      ))}
+                      .
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -346,7 +418,9 @@ export function PhaseTab(props: PhaseTabProps): JSX.Element {
           {/* the cell the figure is drawn into; the scene behind it takes the clicks */}
           <div className="wibc-tableau-scene" ref={sideRef} aria-hidden="true" />
 
-          <div className="wibc-tableau-settings wibc-controls" role="group" aria-label={`Conditions ${voice.period}`}>
+          <div className="wibc-tableau-settings" ref={settingsRef}>
+            {isSleep && <SleepSystemControls gear={sleepGear} onChange={props.onSleepGear} unit={unit} uid={uid} />}
+            <div className="wibc-controls" role="group" aria-label={`Conditions ${voice.period}`}>
             <span className="wibc-controls-label">{voice.settings}</span>
             <label className="wibc-control">
               <span>{controls.shelter.label}</span>
@@ -408,6 +482,7 @@ export function PhaseTab(props: PhaseTabProps): JSX.Element {
             <button type="button" className="wibc-button wibc-controls-gear" onClick={props.onGoToGear}>
               Change your gear →
             </button>
+            </div>
           </div>
         </div>
       </div>

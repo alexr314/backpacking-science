@@ -21,6 +21,18 @@
  * a live fetch when asked for) and the trip tab's actions are callbacks; `CampEvening.tsx`
  * owns the loading.
  *
+ * ONE ANCHOR PER PHASE. The pooled result is computed for every phase whatever the scope,
+ * because its comfort limit is the threshold every scope's risk is read at (`model/risk.ts`);
+ * a night's own result is computed as well when a night is shown, for its bars and its own
+ * limit. The union bound on the resulting numbers is checked here and reported to the console
+ * in development if it ever fails.
+ *
+ * THE AXIS IS THE TRIP'S. One fixed temperature scale for every phase tab and scope, from the
+ * curves of the whole trip, so nothing slides when a tab changes.
+ *
+ * The sleep system (bag and pads) is state here, set on the sleep tab, because the clothed
+ * phases' bag-as-blanket term reads the same bag.
+ *
  * The five phases share one `PhaseTab`; the scene inside it is one world the tabs move
  * through, so the stage is kept mounted across phase tabs and the transition plays.
  */
@@ -28,18 +40,24 @@
 import type { JSX } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { phaseDistributions, type LocalDate, type PhaseDistributions, type PhaseWeather } from '@will-i-be-cold/weather';
-import { PHASE_NAMES, type PhaseName } from '@will-i-be-cold/heat';
+import { PHASE_NAMES, type PhaseName, type SleepGear, type Span } from '@will-i-be-cold/heat';
 import { UNIT_SYMBOL, type Unit } from '../lib/units.js';
 import { DEFAULT_KIT, EMPTY_KIT, kitFromGarments, toggleOwned, type Kit, type Outfit } from '../model/kit.js';
-import { assessPhase, DEFAULT_SETTINGS, type PanelResult, type PhaseSettings } from '../model/panel.js';
+import { assessPhase, DEFAULT_SETTINGS, SLEEP_GEAR, type PanelResult, type PhaseSettings } from '../model/panel.js';
 import { PHASE_TABS, type TabId } from '../model/tabs.js';
 import { encounterOf, type EncounterCurves } from '../model/encounter.js';
+import { anchorOf, checkUnionBound, encounterAxis, riskAt, riskLevel, type Anchor, type ScopeRisk, type UnionBoundCheck } from '../model/risk.js';
 import { pooledPhaseWeather, WHOLE_TRIP, type LoadedTrip, type NightScope, type TripSpec } from '../model/trip.js';
 import { GearTab } from './GearTab.js';
 import { PhaseTab } from './PhaseTab.js';
 import { TripSetup, type PlaceService, type TripJob } from './TripSetup.js';
-import { gapMark } from './ComfortChart.js';
+import { riskMark } from './ComfortChart.js';
 import type { SlotRef } from './Figure.js';
+
+/** The fallback axis if no curve anywhere reaches the floor: a 0 to 60 °F scale, never reached on real data. */
+const FALLBACK_AXIS: Span = { fromC: -17.8, toC: 15.6 };
+
+const RISK_WORD = { fine: 'low risk of cold', marginal: 'some risk of cold', cold: 'likely too cold' } as const;
 
 let uidCounter = 0;
 
@@ -57,6 +75,7 @@ export interface WillIBeColdPanelProps {
   readonly today: LocalDate;
   readonly places: PlaceService;
   readonly initialKit?: Kit;
+  readonly initialSleepGear?: SleepGear;
   readonly initialUnit?: Unit;
   readonly initialTab?: TabId;
   /** Where "See our methodology" goes. */
@@ -68,9 +87,51 @@ interface ShownPhase {
   readonly curves: EncounterCurves;
 }
 
-function usePhaseResult(phase: PhaseName, kit: Kit, unit: Unit, settings: PhaseSettings, weather: PhaseWeather): PanelResult {
+interface PhaseView {
+  /** The pooled result: always computed, because its limit anchors every scope's risk. */
+  readonly pooled: PanelResult;
+  /** The result for the scope on screen; the pooled one itself when the whole trip is shown. */
+  readonly shown: PanelResult;
+  readonly anchor: Anchor;
+  readonly risk: ScopeRisk;
+  readonly nightRisks: readonly ScopeRisk[];
+  readonly check: UnionBoundCheck;
+}
+
+function usePhaseView(
+  phase: PhaseName,
+  kit: Kit,
+  sleepGear: SleepGear,
+  unit: Unit,
+  settings: PhaseSettings,
+  pooledWeather: PhaseWeather,
+  nightWeather: PhaseWeather | null,
+  dists: PhaseDistributions,
+  nightIndex: number | null,
+): PhaseView {
   // The engine bakes units into its prose, so the verdict must be rebuilt on toggle.
-  return useMemo(() => assessPhase(phase, { kit, settings, unit }, weather), [phase, kit, settings, unit, weather]);
+  const pooled = useMemo(
+    () => assessPhase(phase, { kit, settings, unit, sleepGear }, pooledWeather),
+    [phase, kit, settings, unit, sleepGear, pooledWeather],
+  );
+  const night = useMemo(
+    () => (nightWeather === null ? null : assessPhase(phase, { kit, settings, unit, sleepGear }, nightWeather)),
+    [phase, kit, settings, unit, sleepGear, nightWeather],
+  );
+  return useMemo(() => {
+    const anchor = anchorOf(pooled.phase);
+    const nightRisks = dists.byNight.map((d) => riskAt(d, anchor));
+    const pooledRisk = riskAt(dists.overall, anchor);
+    const shownDist = nightIndex === null ? dists.overall : dists.byNight[nightIndex]!;
+    return {
+      pooled,
+      shown: night ?? pooled,
+      anchor,
+      risk: nightIndex === null ? pooledRisk : riskAt(shownDist, anchor),
+      nightRisks,
+      check: checkUnionBound(pooledRisk.cold, nightRisks.map((r) => r.cold)),
+    };
+  }, [pooled, night, dists, nightIndex]);
 }
 
 export function WillIBeColdPanel({
@@ -84,12 +145,14 @@ export function WillIBeColdPanel({
   today,
   places,
   initialKit = DEFAULT_KIT,
+  initialSleepGear = SLEEP_GEAR,
   initialUnit = 'F',
   initialTab = 'gear',
   methodologyHref = '/methodology',
 }: WillIBeColdPanelProps): JSX.Element {
   const [uid] = useState(() => `wibc${++uidCounter}`);
   const [kit, setKit] = useState<Kit>(initialKit);
+  const [sleepGear, setSleepGear] = useState<SleepGear>(initialSleepGear);
   const [unit, setUnit] = useState<Unit>(initialUnit);
   const [tab, setTab] = useState<TabId>(initialTab);
   const [selectedSlot, setSelectedSlot] = useState<SlotRef | null>(null);
@@ -110,30 +173,64 @@ export function WillIBeColdPanel({
     [loaded.weather],
   );
 
-  // what each phase tab looks at: the trip pooled, or one of its nights
-  const shown = useMemo(() => {
-    const pick = (p: PhaseName): ShownPhase => {
-      if (safeScope.kind === 'night') {
-        const day = days[safeScope.index]!;
-        const dist = dists[p].byNight[safeScope.index]!;
-        return { weather: day.phases[p], curves: encounterOf(dist) };
-      }
-      return { weather: pooledPhaseWeather(days, p, dists[p].overall), curves: encounterOf(dists[p].overall) };
-    };
-    return Object.fromEntries(PHASE_NAMES.map((p) => [p, pick(p)])) as Record<PhaseName, ShownPhase>;
-  }, [dists, days, safeScope]);
+  // every phase pooled over the trip: the default view, and the anchor for every other scope
+  const pooled = useMemo(
+    () =>
+      Object.fromEntries(
+        PHASE_NAMES.map((p) => [p, { weather: pooledPhaseWeather(days, p, dists[p].overall), curves: encounterOf(dists[p].overall) }]),
+      ) as Record<PhaseName, ShownPhase>,
+    [dists, days],
+  );
 
-  // one engine call per phase, each remembered against its own inputs
+  // what each phase tab looks at: the trip pooled, or one of its nights
+  const nightIndex = safeScope.kind === 'night' ? safeScope.index : null;
+  const shown = useMemo(() => {
+    if (nightIndex === null) return pooled;
+    const day = days[nightIndex]!;
+    const pick = (p: PhaseName): ShownPhase => ({ weather: day.phases[p], curves: encounterOf(dists[p].byNight[nightIndex]!) });
+    return Object.fromEntries(PHASE_NAMES.map((p) => [p, pick(p)])) as Record<PhaseName, ShownPhase>;
+  }, [dists, days, pooled, nightIndex]);
+
+  // the fixed thermometer axis: one scale for every tab and scope of this trip
+  const axis: Span = useMemo(
+    () => encounterAxis(PHASE_NAMES.flatMap((p) => [dists[p].overall, ...dists[p].byNight])) ?? FALLBACK_AXIS,
+    [dists],
+  );
+
+  // the engine, per phase: the pooled result always, this night's as well when one is shown
+  const nightOf = (p: PhaseName): PhaseWeather | null => (nightIndex === null ? null : shown[p].weather);
+  const views: Readonly<Record<PhaseName, PhaseView>> = {
+    camp_morning: usePhaseView('camp_morning', kit, sleepGear, unit, settings.camp_morning, pooled.camp_morning.weather, nightOf('camp_morning'), dists.camp_morning, nightIndex),
+    hiking: usePhaseView('hiking', kit, sleepGear, unit, settings.hiking, pooled.hiking.weather, nightOf('hiking'), dists.hiking, nightIndex),
+    day_break: usePhaseView('day_break', kit, sleepGear, unit, settings.day_break, pooled.day_break.weather, nightOf('day_break'), dists.day_break, nightIndex),
+    camp_evening: usePhaseView('camp_evening', kit, sleepGear, unit, settings.camp_evening, pooled.camp_evening.weather, nightOf('camp_evening'), dists.camp_evening, nightIndex),
+    sleep: usePhaseView('sleep', kit, sleepGear, unit, settings.sleep, pooled.sleep.weather, nightOf('sleep'), dists.sleep, nightIndex),
+  };
   const results: Readonly<Record<PhaseName, PanelResult>> = {
-    camp_morning: usePhaseResult('camp_morning', kit, unit, settings.camp_morning, shown.camp_morning.weather),
-    hiking: usePhaseResult('hiking', kit, unit, settings.hiking, shown.hiking.weather),
-    day_break: usePhaseResult('day_break', kit, unit, settings.day_break, shown.day_break.weather),
-    camp_evening: usePhaseResult('camp_evening', kit, unit, settings.camp_evening, shown.camp_evening.weather),
-    sleep: usePhaseResult('sleep', kit, unit, settings.sleep, shown.sleep.weather),
+    camp_morning: views.camp_morning.shown,
+    hiking: views.hiking.shown,
+    day_break: views.day_break.shown,
+    camp_evening: views.camp_evening.shown,
+    sleep: views.sleep.shown,
   };
 
+  // The union bound must hold of the numbers on screen; say so loudly in development if it does not.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    for (const p of PHASE_NAMES) {
+      const c = views[p].check;
+      if (!c.holds) {
+        console.warn(
+          `[will-i-be-cold] union bound failed for ${p}: pooled ${c.pooled.toFixed(3)} outside [max ${c.lower.toFixed(3)}, sum ${c.upper.toFixed(3)}] of nights ${c.nights
+            .map((x) => x.toFixed(3))
+            .join(', ')}`,
+        );
+      }
+    }
+  });
+
   // The representative configuration the gear tab's figure wears: the warmest the engine built for the evening.
-  const evening = results.camp_evening;
+  const evening = views.camp_evening.pooled;
   const warmest = useMemo(
     () => evening.phase.candidates.reduce<(typeof evening.phase.candidates)[number] | null>((a, c) => (a === null || c.clo > a.clo ? c : a), null),
     [evening],
@@ -205,6 +302,12 @@ export function WillIBeColdPanel({
         settings={settings[phase]}
         onSettings={(next) => setSettings((s) => ({ ...s, [phase]: next }))}
         result={results[phase]}
+        anchor={views[phase].anchor}
+        risk={views[phase].risk}
+        nightRisks={views[phase].nightRisks}
+        axis={axis}
+        sleepGear={sleepGear}
+        onSleepGear={setSleepGear}
         onGoToGear={() => setTab('gear')}
         onGoToTrip={() => setTab('trip')}
         methodologyHref={methodologyHref}
@@ -216,8 +319,8 @@ export function WillIBeColdPanel({
 
   const renderTabButton = (t: (typeof tabs)[number]): JSX.Element => {
     const i = tabs.findIndex((x) => x.id === t.id);
-    const phaseGaps = t.id === 'gear' || t.id === 'trip' ? null : results[t.id].phase.gaps;
-    const mark = phaseGaps === null ? null : gapMark(phaseGaps);
+    const level = t.id === 'gear' || t.id === 'trip' ? null : riskLevel(views[t.id].risk.cold);
+    const mark = level === null ? null : riskMark(level);
     return (
       <button
         key={t.id}
@@ -242,8 +345,8 @@ export function WillIBeColdPanel({
             …
           </span>
         )}
-        {mark !== null && phaseGaps !== null && (
-          <span className="wibc-tab-status" style={{ color: mark.colour }} aria-label={phaseGaps.length === 0 ? 'covered' : 'has a gap'}>
+        {mark !== null && level !== null && (
+          <span className="wibc-tab-status" style={{ color: mark.colour }} aria-label={RISK_WORD[level]}>
             {mark.glyph}
           </span>
         )}
