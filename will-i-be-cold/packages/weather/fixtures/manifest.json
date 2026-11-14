@@ -1,0 +1,195 @@
+{
+  "recordedAtUtc": "2026-11-13T21:39:57.214Z",
+  "testPoint": {
+    "latitude": 35.6,
+    "longitude": -83.43,
+    "assumedTrailElevationMetres": 1800
+  },
+  "attribution": "Weather data by Open-Meteo.com, CC BY 4.0.",
+  "files": {
+    "geocoding-gatlinburg.json": {
+      "url": "https://geocoding-api.open-meteo.com/v1/search?name=Gatlinburg&count=5&language=en&format=json",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:39:57.940Z",
+      "note": "Ranked geocoding candidates; used for the \"Gatlinburg, Tennessee, United States\" label test."
+    },
+    "geocoding-empty.json": {
+      "url": "https://geocoding-api.open-meteo.com/v1/search?name=zzzzqqqxyz&count=5&language=en&format=json",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:39:58.300Z",
+      "note": "No-match response. NOTE: the API omits the `results` key entirely rather than returning []."
+    },
+    "elevation-smokies-batch.json": {
+      "url": "https://api.open-meteo.com/v1/elevation?latitude=35.6,35.71453,36.1&longitude=-83.43,-83.51189,-83.8",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:39:58.704Z",
+      "note": "Batched 90 m DEM lookup (AT ridge, Gatlinburg, a valley point). Proves comma-batching works."
+    },
+    "forecast-smokies-no-elevation.json": {
+      "url": "https://api.open-meteo.com/v1/forecast?latitude=35.6&longitude=-83.43&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,precipitation_probability,shortwave_radiation&daily=sunrise,sunset&forecast_days=16&timezone=auto&wind_speed_unit=ms",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:39:58.890Z",
+      "note": "Forecast WITHOUT elevation=. Open-Meteo reports elevation 1446 m (its own DEM) and lapses to that."
+    },
+    "forecast-smokies-elevation-1800.json": {
+      "url": "https://api.open-meteo.com/v1/forecast?latitude=35.6&longitude=-83.43&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,precipitation_probability,shortwave_radiation&daily=sunrise,sunset&forecast_days=16&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:39:59.158Z",
+      "note": "Same request WITH elevation=1800. Pair with the previous fixture to measure the lapse correction."
+    },
+    "forecast-smokies-short.json": {
+      "url": "https://api.open-meteo.com/v1/forecast?latitude=35.6&longitude=-83.43&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,precipitation_probability,shortwave_radiation&daily=sunrise,sunset&forecast_days=3&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:39:59.407Z",
+      "note": "Small 3-day forecast used by the fast sampler tests."
+    },
+    "error-bad-latitude.json": {
+      "url": "https://api.open-meteo.com/v1/forecast?latitude=999&longitude=-83.43&hourly=temperature_2m",
+      "httpStatus": 400,
+      "fetchedAtUtc": "2026-11-13T21:39:59.593Z",
+      "note": "Open-Meteo error envelope: HTTP 400 with {\"error\":true,\"reason\":\"...\"}."
+    },
+    "archive/archive-smokies-2006.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2006-11-17&end_date=2006-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:00.398Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2006. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2007.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2007-11-17&end_date=2007-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:00.734Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2007. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2008.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2008-11-17&end_date=2008-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:01.063Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2008. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2009.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2009-11-17&end_date=2009-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:01.446Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2009. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2010.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2010-11-17&end_date=2010-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:02.309Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2010. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2011.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2011-11-17&end_date=2011-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:02.828Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2011. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2012.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2012-11-17&end_date=2012-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:03.196Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2012. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2013.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2013-11-17&end_date=2013-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:03.543Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2013. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2014.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2014-11-17&end_date=2014-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:03.876Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2014. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2015.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2015-11-17&end_date=2015-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:04.208Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2015. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2016.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2016-11-17&end_date=2016-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:04.927Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2016. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2017.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2017-11-17&end_date=2017-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:05.269Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2017. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2018.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2018-11-17&end_date=2018-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:05.641Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2018. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2019.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2019-11-17&end_date=2019-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:05.975Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2019. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2020.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2020-11-17&end_date=2020-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:06.310Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2020. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2021.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2021-11-17&end_date=2021-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:06.797Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2021. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2022.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2022-11-17&end_date=2022-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:07.216Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2022. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2023.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2023-11-17&end_date=2023-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:07.545Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2023. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2024.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2024-11-17&end_date=2024-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:07.879Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2024. One of 20 years pooled into the climatology fallback."
+    },
+    "archive/archive-smokies-2025.json": {
+      "url": "https://archive-api.open-meteo.com/v1/archive?latitude=35.6&longitude=-83.43&start_date=2025-11-17&end_date=2025-11-23&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,shortwave_radiation&daily=sunrise,sunset&timezone=auto&wind_speed_unit=ms&elevation=1800",
+      "httpStatus": 200,
+      "fetchedAtUtc": "2026-11-13T21:40:08.267Z",
+      "note": "ERA5 reanalysis, 20 Nov ±3 days, 2025. One of 20 years pooled into the climatology fallback."
+    }
+  },
+  "climatologyYears": [
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ]
+}

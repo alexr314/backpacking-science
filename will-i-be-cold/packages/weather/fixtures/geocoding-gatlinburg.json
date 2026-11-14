@@ -1,0 +1,41 @@
+{
+  "results": [
+    {
+      "id": 4624443,
+      "name": "Gatlinburg",
+      "latitude": 35.71453,
+      "longitude": -83.51189,
+      "elevation": 394,
+      "feature_code": "PPL",
+      "country_code": "US",
+      "admin1_id": 4662168,
+      "admin2_id": 4656568,
+      "timezone": "America/New_York",
+      "population": 4184,
+      "postcodes": [
+        "37738"
+      ],
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "Tennessee",
+      "admin2": "Sevier"
+    },
+    {
+      "id": 4656583,
+      "name": "Gatlinburg-Pigeon Forge Airport",
+      "latitude": 35.85853,
+      "longitude": -83.52697,
+      "elevation": 295,
+      "feature_code": "AIRP",
+      "country_code": "US",
+      "admin1_id": 4662168,
+      "admin2_id": 4656568,
+      "timezone": "America/New_York",
+      "country_id": 6252001,
+      "country": "United States",
+      "admin1": "Tennessee",
+      "admin2": "Sevier"
+    }
+  ],
+  "generationtime_ms": 0.12302399
+}

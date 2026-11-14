@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "types": ["vite/client", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@will-i-be-cold/heat": ["../heat/src/index.ts"],
+      "@will-i-be-cold/weather": ["../weather/src/index.ts"]
+    },
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "vite.config.ts"]
+}

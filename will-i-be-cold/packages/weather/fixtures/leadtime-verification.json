@@ -1,0 +1,67 @@
+{
+  "url": "https://previous-runs-api.open-meteo.com/v1/forecast?latitude=35.6&longitude=-83.43&hourly=temperature_2m,temperature_2m_previous_day1,temperature_2m_previous_day2,temperature_2m_previous_day3,temperature_2m_previous_day4,temperature_2m_previous_day5,temperature_2m_previous_day6,temperature_2m_previous_day7&past_days=92&forecast_days=0&timezone=auto&elevation=1800",
+  "computedAtUtc": "2026-11-13T21:40:25.914Z",
+  "method": "RMSE of the forecast issued N days earlier against Open-Meteo best_match latest estimate for the same hour.",
+  "caveat": "Truth is the model analysis, not station observations; this is a lower bound on true error. See DEFAULT_UNCERTAINTY.verificationInflation.",
+  "point": {
+    "latitude": 35.6,
+    "longitude": -83.43,
+    "elevationMetres": 1800,
+    "timezone": "America/New_York"
+  },
+  "windowLocal": {
+    "from": "2026-08-13T00:00",
+    "to": "2026-11-12T23:00"
+  },
+  "leads": [
+    {
+      "leadDays": 1,
+      "n": 2208,
+      "biasC": 0.354,
+      "maeC": 0.84,
+      "rmseC": 1.056
+    },
+    {
+      "leadDays": 2,
+      "n": 2208,
+      "biasC": 0.096,
+      "maeC": 1.622,
+      "rmseC": 2.046
+    },
+    {
+      "leadDays": 3,
+      "n": 2208,
+      "biasC": 0.118,
+      "maeC": 1.671,
+      "rmseC": 2.083
+    },
+    {
+      "leadDays": 4,
+      "n": 2208,
+      "biasC": 0.073,
+      "maeC": 1.679,
+      "rmseC": 2.141
+    },
+    {
+      "leadDays": 5,
+      "n": 2208,
+      "biasC": 0.082,
+      "maeC": 1.694,
+      "rmseC": 2.216
+    },
+    {
+      "leadDays": 6,
+      "n": 2208,
+      "biasC": 0.176,
+      "maeC": 1.829,
+      "rmseC": 2.363
+    },
+    {
+      "leadDays": 7,
+      "n": 2208,
+      "biasC": 0.083,
+      "maeC": 2.184,
+      "rmseC": 2.832
+    }
+  ]
+}

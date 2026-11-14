@@ -1,0 +1,32 @@
+{
+  "name": "@will-i-be-cold/weather",
+  "version": "0.1.0",
+  "description": "Keyless Open-Meteo weather/geocoding client and per-phase temperature sampler for Will I Be Cold?",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:live": "WIBC_LIVE=1 vitest run",
+    "record": "node scripts/record-fixtures.mjs",
+    "verify-leadtime": "node scripts/verify-leadtime.mjs",
+    "verify-error-structure": "node scripts/verify-error-structure.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}
