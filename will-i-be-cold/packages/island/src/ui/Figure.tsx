@@ -633,6 +633,42 @@ export const GEOMETRY: Readonly<Record<Pose, PoseGeometry>> = {
  */
 export const GETTING_DOWN: readonly PoseGeometry[] = [matched['turned']!, matched['kneeling']!, matched['planting']!];
 
+/**
+ * The drawn extents of a pose, in the scene's own sense: the points rotated by the lean the
+ * scene will apply, each expanded by half its stroke, because a limb is a capsule of width `w`
+ * about its centreline and the ink reaches `w / 2` past the points.
+ *
+ * This exists so the scene can stand a pose on the ground by measuring it rather than by a
+ * constant per pose picked by eye. Those constants had drifted: the seated figure floated, the
+ * walker's boots cut below the ground line and the sleeper sat above it, so the one plane every
+ * pose shares was the one thing the scene did not actually share.
+ */
+export function extentsOf(g: PoseGeometry, deg = 0): { readonly minX: number; readonly maxX: number; readonly minY: number; readonly maxY: number } {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const sn = Math.sin(r);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const region of REGION_LIST) {
+    for (const part of g.body[region]) {
+      const h = part.w / 2;
+      for (let i = 0; i < part.pts.length; i += 2) {
+        const x = part.pts[i]!;
+        const y = part.pts[i + 1]!;
+        const rx = x * c - y * sn;
+        const ry = x * sn + y * c;
+        if (rx - h < minX) minX = rx - h;
+        if (rx + h > maxX) maxX = rx + h;
+        if (ry - h < minY) minY = ry - h;
+        if (ry + h > maxY) maxY = ry + h;
+      }
+    }
+  }
+  return { minX, maxX, minY, maxY };
+}
+
 /** Non-numeric pose facts, by pose. */
 const POSE_FACTS: Readonly<Record<Pose, { sockCuff: boolean; prop: JSX.Element | null }>> = {
   seated: { sockCuff: false, prop: null },

@@ -46,7 +46,7 @@
 import type { JSX } from 'preact';
 import { useMemo, useRef } from 'preact/hooks';
 import type { Verdict } from '@will-i-be-cold/heat';
-import { Figure, GEOMETRY, GETTING_DOWN, lerpGeometry, poseFacts, specOf, type Pose, type PoseGeometry } from './Figure.js';
+import { Figure, GEOMETRY, GETTING_DOWN, extentsOf, lerpGeometry, poseFacts, specOf, type Pose, type PoseGeometry } from './Figure.js';
 import { Fire } from './Fire.js';
 import { SKY_STOP_FRACTIONS, STARS, lerpProgress, overcastAt, skyAt } from './Sky.js';
 import type { Outfit, Region } from '../model/kit.js';
@@ -65,7 +65,14 @@ const HORIZON = 0.6;
 const FRAME_X = 0.41;
 const FRAME_W = 0.4607;
 /** The world's ground line, the fraction of the stage height the figure and the fire stand on. */
-const GROUND = 0.869;
+/**
+ * The ground plane, as a fraction of the stage. One line for every tab: the figure, the fire and
+ * the mat all stand on it, so it must clear the tallest controls any tab puts over the stage.
+ * The sleep tab's cell is the tightest (its bottom sits at 0.809 of the stage), so this stays
+ * below that. Letting each tab clamp this to its own cell is what used to move the ground, and
+ * the body with it, by 48 px between tabs.
+ */
+const GROUND = 0.8;
 /** The little scene's unit: what the figure and the fire are scaled by. */
 const UNIT = 0.55;
 /** The clouds' drift speed, stage pixels per second. */
@@ -387,17 +394,6 @@ interface DownStop {
 }
 
 /**
- * Where each stop stands: a frame fraction for its centre, its scale against the seated
- * figure's, and the local y that must sit on the ground (the seated frame's bottom for the
- * one still on the log, the upright frame's ground line for the two on their knees).
- */
-const DOWN_STOPS: readonly { readonly cx: number; readonly k: number; readonly baseY: number }[] = [
-  { cx: 0.42, k: 1.0, baseY: 380 },
-  { cx: 0.33, k: 0.88, baseY: 470 },
-  { cx: 0.26, k: 0.82, baseY: 470 },
-];
-
-/**
  * The four legs: turn, down onto the knees, reach the hand to the ground, fold out flat. The
  * turn is quick and the two that carry weight are slow, which is how the motion actually goes.
  */
@@ -408,21 +404,14 @@ function downRoute(from: Pose, to: Pose, world: World): readonly DownStop[] {
   const down = to === 'lying' && from !== 'lying';
   const up = from === 'lying' && to !== 'lying';
   if (!down && !up) return [];
-  const { sx, groundY, unit, narrow } = world;
-  const s = (unit * (narrow ? 0.56 : 0.62)) / GEOMETRY.seated.h;
   const order = down ? [0, 1, 2] : [2, 1, 0];
   // the weight of the leg arriving at each stop: read forwards going down, backwards coming up
   const weights = down ? [DOWN_LEGS[0]!, DOWN_LEGS[1]!, DOWN_LEGS[2]!] : [DOWN_LEGS[3]!, DOWN_LEGS[2]!, DOWN_LEGS[1]!];
   return order.map((i, n) => {
-    const stop = DOWN_STOPS[i]!;
-    const scale = s * stop.k;
-    return {
-      geometry: GETTING_DOWN[i]!,
-      fx: sx(stop.cx) - 150 * scale,
-      fy: groundY - stop.baseY * scale,
-      scale,
-      w: weights[n]!,
-    };
+    const geometry = GETTING_DOWN[i]!;
+    // every stop stands on the same ground at the same spot, so getting down is the body folding
+    // rather than the body travelling
+    return { geometry, ...stand(geometry, 0, world), w: weights[n]! };
   });
 }
 
@@ -490,25 +479,49 @@ interface World {
   readonly narrow: boolean;
 }
 
-/** Scene-level placement of the figure for a pose: where its local origin lands, its scale and its lean. */
+/**
+ * ONE GROUND, ONE SIZE, ONE SPOT.
+ *
+ * Every pose used to carry its own placement constants and its own scale: the walker was drawn
+ * at 0.9 and the sleeper at 0.7, the sleeper sat at a tenth of the way across the frame while
+ * everyone else stood at four tenths, and each pose's distance to the ground had been chosen by
+ * eye. Measured, the boots cut 40 px below the ground line while the sleeper floated 39 px above
+ * it, the body changed size by 30 % between tabs and slid 89 px sideways. That is what reads as
+ * the character "shifting around" from tab to tab, and it is a worse problem than any amount of
+ * roughness inside a single transition: the eye is tracking a body that will not hold still.
+ *
+ * So the scene now has one plane. Every pose is measured (`extentsOf`, with the lean it will be
+ * drawn at), stood with its lowest ink exactly on `groundY`, drawn at one scale, and centred on
+ * one spot. The figure changes shape between tabs and nothing else, and because the sleeper no
+ * longer travels to its own corner, the mat can simply materialise flat on the ground underneath
+ * it (see the pad, below) rather than swinging in attached to the body.
+ */
+const LEAN: Readonly<Record<Pose, number>> = { seated: 0, standing: 0, walking: -3, lying: -90 };
+
+/** Where the body is centred, as a frame fraction. The one spot every pose is drawn on. */
+const FIGURE_CX = 0.44;
+const FIGURE_CX_NARROW = 0.4;
+
 function placement(pose: Pose, world: World): { fx: number; fy: number; scale: number; angle: number } {
+  const angle = LEAN[pose];
+  return { ...stand(GEOMETRY[pose], angle, world), angle };
+}
+
+/**
+ * Stand any geometry on the ground at the figure's spot. A point `p` is drawn at
+ * `(fx, fy) + scale * R(p)`, so the lowest ink lands on the ground when `fy = groundY - scale *
+ * maxY`, and the body is centred when `fx = centre - scale * (minX + maxX) / 2`. Transition
+ * poses go through the same function, which is why the descent neither sinks nor drifts.
+ */
+function stand(geometry: PoseGeometry, angle: number, world: World): { fx: number; fy: number; scale: number } {
   const { sx, groundY, unit, narrow } = world;
-  const s = (unit * (narrow ? 0.56 : 0.62)) / GEOMETRY.seated.h;
-  switch (pose) {
-    case 'seated':
-      return { fx: sx(narrow ? 0.4 : 0.44) - 150 * s, fy: groundY - 380 * s, scale: s, angle: 0 };
-    case 'standing':
-      return { fx: sx(0.44) - 150 * s, fy: groundY - 482 * s, scale: s, angle: 0 };
-    case 'walking': {
-      const sw = s * 0.9;
-      return { fx: sx(0.42) - 150 * sw, fy: groundY - 480 * sw, scale: sw, angle: -3 };
-    }
-    case 'lying': {
-      const sl = s * 0.7;
-      // the figure turns onto its side: local +y runs along the ground to the right, local +x upward
-      return { fx: sx(0.13), fy: groundY - 4 + 46 * sl, scale: sl, angle: -90 };
-    }
-  }
+  const scale = (unit * (narrow ? 0.56 : 0.62)) / GEOMETRY.seated.h;
+  const e = extentsOf(geometry, angle);
+  return {
+    fx: sx(narrow ? FIGURE_CX_NARROW : FIGURE_CX) - scale * ((e.minX + e.maxX) / 2),
+    fy: groundY - scale * e.maxY,
+    scale,
+  };
 }
 
 const GLOW_MS = 3600;
@@ -538,7 +551,9 @@ export function Scene(props: SceneProps): JSX.Element {
       w,
       h,
       sx: (f: number): number => w * (FRAME_X + f * FRAME_W),
-      groundY: Math.min(vy + vh - 6, GROUND * h),
+      // one plane for every tab. Clamping this to the tab's own measured cell moved the ground
+      // 48 px between the sleep tab and the rest, which moved the whole body with it.
+      groundY: GROUND * h,
       unit: Math.min(UNIT * h, 440),
       narrow,
     }),
@@ -608,6 +623,22 @@ export function Scene(props: SceneProps): JSX.Element {
   const starAngle = (live.p - 1.5) * 22;
 
   // --- the fire: a fixed place in the world ----------------------------------------------
+  /**
+   * The mat is part of the camp, not part of the body. Drawn inside the figure's transform it
+   * swung up off the ground with him whenever he got up, which is the single thing that most
+   * destroyed the sense that there was a ground at all. Here it lies flat where the sleeper
+   * will lie, in scene coordinates, and simply fades in and out.
+   */
+  const mat = useMemo(() => {
+    const lie = placement('lying', world);
+    const e = extentsOf(GEOMETRY.lying, -90);
+    return {
+      x: lie.fx + lie.scale * e.minX - 10,
+      y: world.groundY - 10,
+      w: lie.scale * (e.maxX - e.minX) + 20,
+      h: 12,
+    };
+  }, [world]);
   const fireScale = (unit * (narrow ? 0.22 : 0.3)) / 130;
   const fireCx = sx(narrow ? 0.8 : 0.68);
   const fireX = fireCx - 60 * fireScale;
@@ -848,6 +879,14 @@ export function Scene(props: SceneProps): JSX.Element {
       {/* the figure needs to separate from the ridgeline behind it: a pool of dusk, not a halo */}
       <ellipse cx={poolX} cy={poolY} rx={poolR * 1.04} ry={poolR} fill={`url(#${uid}-figurepool)`} />
 
+      {/* the mat, flat on the ground where the sleeper lies, under everything the body does */}
+      {live.bag > 0.01 && (
+        <g opacity={live.bag}>
+          <rect x={mat.x} y={mat.y} width={mat.w} height={mat.h} rx={mat.h / 2} fill="#3a2e22" />
+          <rect x={mat.x + 6} y={mat.y + 3} width={Math.max(0, mat.w - 12)} height={4} rx={2} fill="#5a4833" opacity="0.8" />
+        </g>
+      )}
+
       <g
         transform={figureTransform}
         className="wibc-scene-figure"
@@ -862,13 +901,6 @@ export function Scene(props: SceneProps): JSX.Element {
           }
         }}
       >
-        {/* the pad, under the bag: a strip along the figure's back */}
-        {live.bag > 0.01 && (
-          <g opacity={live.bag}>
-            <rect x={44} y={52} width={18} height={476} rx={9} fill="#3a2e22" />
-            <rect x={48} y={56} width={6} height={468} rx={3} fill="#5a4833" opacity="0.8" />
-          </g>
-        )}
         {/* the pack on the back, drawn behind the torso; it shows past the shoulders and sides */}
         {live.packBack > 0.01 && (
           <g opacity={live.packBack}>
