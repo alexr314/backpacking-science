@@ -48,6 +48,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Verdict } from '@will-i-be-cold/heat';
 import { Figure, GEOMETRY, STRIDE_SECONDS, extentsOf, lerpGeometry, poseFacts, specOf, walkCycleAt, type Pose, type PoseGeometry } from './Figure.js';
 import { Fire } from './Fire.js';
+import { Sleepers } from './Sleepers.js';
 import { SKY_STOP_FRACTIONS, STARS, lerpProgress, overcastAt, skyAt } from './Sky.js';
 import type { Outfit, Region } from '../model/kit.js';
 import type { Box } from '../lib/useMeasure.js';
@@ -1065,6 +1066,13 @@ export function Scene(props: SceneProps): JSX.Element {
               </text>
             </g>
           ))}
+        </g>
+      )}
+
+      {/* Z's off the sleeper's head, which is the crown of the skull wherever the pose puts it */}
+      {live.bag > 0.01 && (
+        <g transform={`translate(${toScene(...spec.headTop)[0].toFixed(1)} ${(toScene(...spec.headTop)[1] - 10).toFixed(1)})`}>
+          <Sleepers uid={uid} present={live.bag * live.figure} scale={Math.max(0.35, s * 1.9)} />
         </g>
       )}
 
