@@ -609,6 +609,72 @@ export async function fetchForecast(
   return parseForecast(await fetchJson(forecastUrl(req, endpoints)));
 }
 
+/**
+ * A forecast for several points at once: the route case.
+ *
+ * Open-Meteo takes comma-separated coordinate lists and, crucially, a matching list of
+ * elevations, so every point is lapse-corrected to its own height rather than all of them to one.
+ * That is the whole reason a route is worth computing: a night in a gap and a night on a ridge
+ * are different nights, and the engine already insists that a forecast is made for a point and a
+ * height rather than for the nearest town.
+ *
+ * It answers with an array when given more than one point and with a bare object when given one,
+ * so `parseForecastMany` accepts both rather than making the caller care how many they asked for.
+ */
+export interface MultiForecastRequest {
+  readonly points: readonly { readonly latitude: number; readonly longitude: number; readonly elevation: Metres }[];
+  /** 1..16, default 16. */
+  readonly forecastDays?: number;
+  readonly pastDays?: number;
+}
+
+/** Open-Meteo's ceiling on coordinates in one forecast call. */
+export const MAX_FORECAST_POINTS = 100;
+
+export function forecastUrlMany(req: MultiForecastRequest, endpoints: OpenMeteoEndpoints = DEFAULT_ENDPOINTS): string {
+  const days = req.forecastDays ?? MAX_FORECAST_DAYS;
+  if (!Number.isInteger(days) || days < 1 || days > MAX_FORECAST_DAYS) {
+    throw new RangeError(`forecastDays must be an integer 1..${MAX_FORECAST_DAYS}, got ${days}`);
+  }
+  if (req.points.length === 0) throw new RangeError('forecastUrlMany: no points');
+  if (req.points.length > MAX_FORECAST_POINTS) {
+    throw new RangeError(`forecastUrlMany: ${req.points.length} points exceeds Open-Meteo's limit of ${MAX_FORECAST_POINTS}`);
+  }
+  for (const pt of req.points) {
+    if (!Number.isFinite(pt.elevation)) {
+      throw new RangeError('forecastUrlMany: every point needs an `elevation` (metres) so Open-Meteo can lapse-correct');
+    }
+  }
+  const p = new URLSearchParams({
+    latitude: req.points.map((x) => String(x.latitude)).join(','),
+    longitude: req.points.map((x) => String(x.longitude)).join(','),
+    elevation: req.points.map((x) => String(Math.round(x.elevation))).join(','),
+    hourly: FORECAST_HOURLY_VARS.join(','),
+    daily: 'sunrise,sunset',
+    forecast_days: String(days),
+    timezone: 'auto',
+    wind_speed_unit: 'ms',
+  });
+  if (req.pastDays) p.set('past_days', String(req.pastDays));
+  return `${endpoints.forecast}?${p}`;
+}
+
+export function parseForecastMany(body: unknown, expected: number): SeriesResponse[] {
+  const list = Array.isArray(body) ? body : [body];
+  if (list.length !== expected) {
+    throw new OpenMeteoShapeError(`forecast: asked for ${expected} points, got ${list.length}`, 'forecast');
+  }
+  return list.map((one, i) => parseSeriesResponse(one, `forecast[${i}]`, { expectPop: true }));
+}
+
+export async function fetchForecastMany(
+  req: MultiForecastRequest,
+  fetchJson: FetchJson,
+  endpoints: OpenMeteoEndpoints = DEFAULT_ENDPOINTS,
+): Promise<SeriesResponse[]> {
+  return parseForecastMany(await fetchJson(forecastUrlMany(req, endpoints)), req.points.length);
+}
+
 export function parseForecast(body: unknown): SeriesResponse {
   return parseSeriesResponse(body, 'forecast', { expectPop: true });
 }

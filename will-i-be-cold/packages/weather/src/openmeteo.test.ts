@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  forecastUrlMany,
+  parseForecastMany,
+  MAX_FORECAST_POINTS,
   archiveUrl,
   assertHourlyContiguous,
   buildClimatology,
@@ -289,6 +292,50 @@ describe('forecast', () => {
     });
     await expect(f('https://example.invalid')).rejects.toBeInstanceOf(OpenMeteoApiError);
     await expect(f('https://example.invalid')).rejects.toThrow(/Latitude must be in range/);
+  });
+});
+
+describe('forecast for several points', () => {
+  const pts = [
+    { latitude: 35.6, longitude: -83.43, elevation: 1800 },
+    { latitude: 35.7, longitude: -83.5, elevation: 1200 },
+    { latitude: 35.8, longitude: -83.6, elevation: 900 },
+  ];
+
+  it('sends one coordinate list and one elevation list, in step', () => {
+    const url = new URL(forecastUrlMany({ points: pts }));
+    expect(url.searchParams.get('latitude')).toBe('35.6,35.7,35.8');
+    expect(url.searchParams.get('longitude')).toBe('-83.43,-83.5,-83.6');
+    // the point of the exercise: each night lapse-corrected to its own height, not all to one
+    expect(url.searchParams.get('elevation')).toBe('1800,1200,900');
+  });
+
+  it('keeps the other terms the single-point call sends', () => {
+    const url = new URL(forecastUrlMany({ points: pts }));
+    expect(url.searchParams.get('wind_speed_unit')).toBe('ms');
+    expect(url.searchParams.get('timezone')).toBe('auto');
+    expect(url.searchParams.get('daily')).toBe('sunrise,sunset');
+  });
+
+  it('refuses a request it cannot make', () => {
+    expect(() => forecastUrlMany({ points: [] })).toThrow(/no points/);
+    expect(() => forecastUrlMany({ points: pts, forecastDays: 17 })).toThrow(/1\.\.16/);
+    const tooMany = Array.from({ length: MAX_FORECAST_POINTS + 1 }, () => pts[0]!);
+    expect(() => forecastUrlMany({ points: tooMany })).toThrow(/exceeds/);
+    // @ts-expect-error -- elevation is mandatory here too
+    expect(() => forecastUrlMany({ points: [{ latitude: 1, longitude: 2 }] })).toThrow(/elevation/);
+  });
+
+  it('reads an array back, and a bare object when only one point was asked for', () => {
+    const one = loadFixture('forecast-smokies-elevation-1800.json');
+    expect(parseForecastMany([one, one], 2)).toHaveLength(2);
+    // Open-Meteo answers a one-point request with an object, not a one-element array
+    expect(parseForecastMany(one, 1)).toHaveLength(1);
+  });
+
+  it('refuses a reply that does not answer the question asked', () => {
+    const one = loadFixture('forecast-smokies-elevation-1800.json');
+    expect(() => parseForecastMany([one, one], 3)).toThrow(/asked for 3 points, got 2/);
   });
 });
 

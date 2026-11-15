@@ -663,8 +663,11 @@ export function walkCycleAt(phase: number): PoseGeometry {
   };
 }
 
-/** A full stride, in seconds. Loaded, on a climb, unhurried: the first pass at half this read as a trot. */
-export const STRIDE_SECONDS = 1.84;
+/**
+ * A full stride, in seconds. The first pass ran at 0.92 and read as a trot under a loaded pack;
+ * doubling it read as slow motion. 0.65 of the original rate is the pace that looks like walking.
+ */
+export const STRIDE_SECONDS = 0.92 / 0.65;
 
 /** Non-numeric pose facts, by pose. */
 const POSE_FACTS: Readonly<Record<Pose, { sockCuff: boolean; prop: JSX.Element | null }>> = {

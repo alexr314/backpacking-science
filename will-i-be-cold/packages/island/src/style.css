@@ -2133,6 +2133,21 @@
 /* ===== the sleep system's controls, and the small number fields ======================== */
 
 /* two rows on the sleep tab: the system above, the conditions beneath, one hairline between them and the scene */
+/* the sleep system is two floors, so its controls are two rows: over you, then under you */
+.wibc-sleep-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.wibc-sleep-rows .wibc-sleep-controls + .wibc-sleep-controls {
+  border-top: none;
+  padding-top: 0;
+}
+
+.wibc-sleep-rows .wibc-controls-label {
+  min-width: 7.5em;
+}
+
 .wibc-sleep-controls + .wibc-controls {
   border-top: none;
   padding-top: 0;

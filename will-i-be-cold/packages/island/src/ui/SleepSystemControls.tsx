@@ -2,6 +2,12 @@
  * The bag and the pads, on the sleep tab: the one place the sleep system lives, so this is
  * where it is set, with the two-floor diagram and the pad delta moving as you type.
  *
+ * TWO ROWS, BECAUSE THERE ARE TWO FLOORS. Everything on one line read as a jumble of fields
+ * with no telling which belonged to what. The system is already two independent paths in the
+ * engine (`solveSleepSystem` splits over and under), so the controls say so: what is over you
+ * on one line, what is under you on the next. The pads also needed a way to say there are none,
+ * which the stack could reach only by deleting its last row and never offered in words.
+ *
  * Three facts about the bag and one list for the pads, all of them `solveSleepSystem()`'s
  * own inputs (`BagSpec`, `PadSpec`): bag or quilt; the number on the label; and **which
  * temperature that number is**. US brands print the limit, EU brands the comfort, and the
@@ -20,7 +26,16 @@ import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { fahrenheitToCelsius, type LabelRatingType, type QuiltProvenance, type SleepGear } from '@will-i-be-cold/heat';
 import { toUnit, UNIT_SYMBOL, type Unit } from '../lib/units.js';
-import { NEW_PAD, QUILT_PROVENANCE_OPTIONS, RATING_TYPE_OPTIONS } from '../model/panel.js';
+import { QUILT_PROVENANCE_OPTIONS, RATING_TYPE_OPTIONS } from '../model/panel.js';
+
+/**
+ * What people actually carry, as starting points rather than as a catalogue. An inflatable
+ * three-season mat is around R 4; a closed-cell foam mat is around R 2, and is the thing most
+ * often stacked under one. Both are editable the moment they are added: the number on the
+ * hangtag is the one that counts.
+ */
+const INFLATABLE_PAD = { imperialR: 4.2, label: 'inflatable pad' };
+const FOAM_PAD = { imperialR: 2, label: 'foam pad' };
 
 export interface SleepSystemControlsProps {
   readonly gear: SleepGear;
@@ -35,12 +50,14 @@ export function SleepSystemControls({ gear, onChange, unit, uid }: SleepSystemCo
   const setPad = (i: number, imperialR: number): void =>
     onChange({ ...gear, pads: gear.pads.map((p, j) => (j === i ? { ...p, imperialR } : p)) });
   const removePad = (i: number): void => onChange({ ...gear, pads: gear.pads.filter((_, j) => j !== i) });
-  const addPad = (): void => onChange({ ...gear, pads: [...gear.pads, { ...NEW_PAD, label: `pad ${gear.pads.length + 1}` }] });
+  const addPad = (preset: { readonly imperialR: number; readonly label: string }): void =>
+    onChange({ ...gear, pads: [...gear.pads, { ...preset }] });
   const ratingHint = RATING_TYPE_OPTIONS.find((o) => o.value === bag.ratingType)?.hint ?? '';
 
   return (
-    <div className="wibc-controls wibc-sleep-controls" role="group" aria-label="Your sleep system">
-      <span className="wibc-controls-label">Your sleep system</span>
+    <div className="wibc-sleep-rows" role="group" aria-label="Your sleep system">
+      <div className="wibc-controls wibc-sleep-controls" role="group" aria-label="Over you">
+      <span className="wibc-controls-label">Over you</span>
 
       <span className="wibc-control">
         <span className="wibc-seg wibc-seg-small" role="group" aria-label="Bag or quilt">
@@ -109,8 +126,13 @@ export function SleepSystemControls({ gear, onChange, unit, uid }: SleepSystemCo
         </label>
       )}
 
+      </div>
+
+      <div className="wibc-controls wibc-sleep-controls" role="group" aria-label="Under you">
+      <span className="wibc-controls-label">Under you</span>
+
       <span className="wibc-control wibc-pads" role="group" aria-label="Pads under you, R-values; stacked pads add">
-        <span>{gear.pads.length === 1 ? 'Pad' : gear.pads.length === 0 ? 'No pad' : 'Pads, stacked'}</span>
+        <span>{gear.pads.length === 1 ? 'Pad' : gear.pads.length === 0 ? 'Nothing under you' : 'Stacked'}</span>
         {gear.pads.map((pad, i) => (
           <span key={i} className="wibc-pad">
             <span className="wibc-pad-r" aria-hidden="true">
@@ -131,10 +153,23 @@ export function SleepSystemControls({ gear, onChange, unit, uid }: SleepSystemCo
             </button>
           </span>
         ))}
-        <button type="button" className="wibc-toggle wibc-pad-add" onClick={addPad}>
-          {gear.pads.length === 0 ? 'Add a pad' : 'Stack another pad'}
+        <button type="button" className="wibc-toggle wibc-pad-add" onClick={() => addPad(INFLATABLE_PAD)}>
+          Inflatable pad
+        </button>
+        <button type="button" className="wibc-toggle wibc-pad-add" onClick={() => addPad(FOAM_PAD)}>
+          Foam pad
+        </button>
+        {/* the engine is happy with an empty stack; until now you could only get there by deleting rows */}
+        <button
+          type="button"
+          className="wibc-toggle"
+          aria-pressed={gear.pads.length === 0}
+          onClick={() => onChange({ ...gear, pads: [] })}
+        >
+          I don&rsquo;t have one
         </button>
       </span>
+      </div>
     </div>
   );
 }

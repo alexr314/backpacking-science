@@ -146,32 +146,61 @@ function simplify(ps, tolerance) {
   return ps.filter((_, i) => keep[i]);
 }
 
-/** Stage 4: elevations, 100 at a time, politely. */
-async function elevations(points, onProgress) {
-  const out = [];
-  for (let i = 0; i < points.length; i += 100) {
+/**
+ * Stage 4: elevations, 100 at a time, which is the endpoint's hard limit.
+ *
+ * TWO THINGS LEARNED THE EXPENSIVE WAY. Open-Meteo weights a request by how much work it is, so
+ * a call carrying 100 coordinates counts as far more than one against the minutely allowance:
+ * firing them 120 ms apart earned a 429 after six batches. And a 429 is not a transient to be
+ * backed off in milliseconds; it says "try again in one minute" and means it.
+ *
+ * So: a gap between batches, a full minute's wait on a 429, and a checkpoint after every batch.
+ * A trail is 350 calls and the better part of ten minutes, and losing all of it to one refusal
+ * near the end is how this stage failed the first time.
+ */
+async function elevations(points, cacheFile, onProgress) {
+  let out = [];
+  if (cacheFile && existsSync(cacheFile)) {
+    const saved = JSON.parse(await readFile(cacheFile, 'utf8'));
+    if (Array.isArray(saved) && saved.length <= points.length) {
+      out = saved;
+      process.stderr.write(`    resuming at ${out.length}/${points.length}\n`);
+    }
+  }
+  while (out.length < points.length) {
+    const i = out.length;
     const batch = points.slice(i, i + 100);
     const lat = batch.map((p) => p[1].toFixed(5)).join(',');
     const lon = batch.map((p) => p[0].toFixed(5)).join(',');
     let got = null;
-    for (let attempt = 0; attempt < 5 && got === null; attempt += 1) {
+    for (let attempt = 0; attempt < 8 && got === null; attempt += 1) {
       try {
         const res = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`, { headers: { 'User-Agent': UA } });
+        if (res.status === 429) {
+          process.stderr.write(`    rate limited at ${i}, waiting 65s\n`);
+          await new Promise((r) => setTimeout(r, 65000));
+          continue;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        if (!Array.isArray(json.elevation) || json.elevation.length !== batch.length) throw new Error('shape');
+        if (!Array.isArray(json.elevation) || json.elevation.length !== batch.length) throw new Error('unexpected shape');
         got = json.elevation;
-      } catch {
-        await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+      } catch (err) {
+        process.stderr.write(`    ${err.message} at ${i}, retrying\n`);
+        await new Promise((r) => setTimeout(r, 1500 * 2 ** attempt));
       }
     }
-    if (got === null) throw new Error(`elevation failed at point ${i}`);
-    out.push(...got);
+    if (got === null) throw new Error(`elevation failed at point ${i} after 8 attempts`);
+    out = out.concat(got);
+    if (cacheFile) await writeFile(cacheFile, JSON.stringify(out));
     onProgress(out.length, points.length);
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, ELEVATION_GAP_MS));
   }
   return out;
 }
+
+/** Between elevation batches. 100 coordinates is a heavy request and the allowance is minutely. */
+const ELEVATION_GAP_MS = 1300;
 
 // ---------------------------------------------------------------------------------------------
 
@@ -202,8 +231,8 @@ const simpleLength = lengthOf(pts);
 process.stderr.write(`    ${pts.length.toLocaleString()} points, ${(simpleLength / 1609.344).toFixed(1)} mi, ${(100 * (1 - simpleLength / fullLength)).toFixed(2)}% shorter, mean spacing ${(simpleLength / pts.length).toFixed(0)} m\n`);
 
 process.stderr.write(' 4. elevations\n');
-const elev = await elevations(pts, (done, total) => {
-  if (done % 2000 === 0 || done === total) process.stderr.write(`    ${done}/${total}\n`);
+const elev = await elevations(pts, path.join(cacheDir, `${slug}-elev-${tolerance}.json`), (done, total) => {
+  if (done % 5000 === 0 || done === total) process.stderr.write(`    ${done}/${total}\n`);
 });
 
 // cumulative distance, metres, so the island can address the trail by how far along it you are

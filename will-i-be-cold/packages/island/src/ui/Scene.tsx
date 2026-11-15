@@ -437,6 +437,19 @@ interface World {
  */
 const LEAN: Readonly<Record<Pose, number>> = { seated: 0, standing: 0, walking: -3, lying: -90 };
 
+/**
+ * The stride's first frame, and the pose the walk onto the trail tab ends at.
+ *
+ * The arrival used to morph to the old static mid-stride drawing and then cut to the cycle at
+ * whatever phase its free-running clock had reached, which read as the figure teleporting the
+ * moment it stopped moving. Landing the tween on this frame and starting the clock from it means
+ * the cycle picks up exactly where the walk-in put the body down.
+ */
+const WALK_START = walkCycleAt(0);
+
+/** The body a pose is drawn from: the walker's is the cycle's own first frame, not the old still. */
+const bodyFor = (pose: Pose): PoseGeometry => (pose === 'walking' ? WALK_START : GEOMETRY[pose]);
+
 /** Where the body is centred, as a frame fraction. The one spot every pose is drawn on. */
 const FIGURE_CX = 0.44;
 const FIGURE_CX_NARROW = 0.4;
@@ -457,7 +470,7 @@ const LYING_CX_NARROW = 0.26;
 
 function placement(pose: Pose, world: World): { fx: number; fy: number; scale: number; angle: number } {
   const angle = LEAN[pose];
-  const stood = stand(GEOMETRY[pose], angle, world);
+  const stood = stand(bodyFor(pose), angle, world);
   if (pose !== 'lying') return { ...stood, angle };
   const scale = stood.scale * LYING_SCALE;
   const e = extentsOf(GEOMETRY.lying, angle);
@@ -569,7 +582,7 @@ export function Scene(props: SceneProps): JSX.Element {
     const place = placement(target.pose, world);
     return {
       p: target.p,
-      geometry: GEOMETRY[target.pose],
+      geometry: bodyFor(target.pose),
       ...place,
       hearth: target.hearth,
       log: target.log,
@@ -620,9 +633,11 @@ export function Scene(props: SceneProps): JSX.Element {
    * and it would fight a cycle running underneath it. Standing the cycle every frame is what
    * keeps the planted foot on the ground while the hips rise and fall over it.
    */
-  const striding = target.pose === 'walking';
-  const phase = useStridePhase(striding);
-  const stride = striding && sameLive(live, liveTarget) ? walkCycleAt(phase) : null;
+  // the clock only starts once the walk-in has landed, so the first frame of the cycle is the
+  // frame the body arrived in rather than wherever a clock left running would have got to
+  const arrived = target.pose === 'walking' && sameLive(live, liveTarget);
+  const phase = useStridePhase(arrived);
+  const stride = arrived ? walkCycleAt(phase) : null;
   const body = stride ?? live.geometry;
   const spec = specOf(body, poseFacts(target.pose));
   const lit = glow > 0.5 || sky.altitude > 0.05;
