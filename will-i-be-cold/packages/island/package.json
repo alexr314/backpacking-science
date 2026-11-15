@@ -2,7 +2,7 @@
   "name": "@will-i-be-cold/island",
   "version": "0.1.0",
   "private": true,
-  "description": "Preact island for Will I Be Cold? — the camp-evening panel, with a standalone Vite dev harness.",
+  "description": "Preact island for Will I Be Cold? \u2014 the camp-evening panel, with a standalone Vite dev harness.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",
@@ -14,7 +14,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:embed": "vite build --config vite.lib.config.ts"
   },
   "dependencies": {
     "preact": "^10.26.0"
