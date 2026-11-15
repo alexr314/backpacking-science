@@ -1,0 +1,19 @@
+{
+  "name": "@will-i-be-cold/trails",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Long-trail centrelines with their elevation profiles, and the arithmetic of walking along one.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:trail": "node tools/build-trail.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

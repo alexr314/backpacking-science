@@ -79,6 +79,8 @@ export interface PoseGeometry {
   readonly neckY: number;
   /** Where a trekking pole is held, when this pose holds one. The scene hangs the pole off it. */
   readonly grip?: readonly [number, number];
+  /** Where the pack rides, when the pose wants it somewhere other than square on the back. */
+  readonly pack?: { readonly x: number; readonly kx: number; readonly deg: number };
 }
 
 /** A pose as a scene or the gear tab sees it: geometry plus the few things that are not numbers. */
@@ -101,6 +103,8 @@ export interface PoseSpec {
   readonly ankles: PoseGeometry['ankles'];
   /** Where a trekking pole is held, when this pose holds one. */
   readonly grip?: readonly [number, number];
+  /** Where the pack rides, when the pose wants it somewhere other than square on the back. */
+  readonly pack?: { readonly x: number; readonly kx: number; readonly deg: number };
   /** Where the neck meets the torso: the split view's divide starts here, so the head stays whole. */
   readonly neckY: number;
   /** Whether a sock's cuff shows above the shoe. Seated, the ankle is tucked and it reads wrong. */
@@ -583,7 +587,10 @@ function armAt(phase: number): { elbow: [number, number]; wrist: [number, number
   const upper = ARM_SWING * Math.cos(t);
   const bend = ELBOW_BEND * (1 + Math.max(0, Math.cos(t))) * 0.6;
   const elbow = joint(SPINE_X, SHOULDER_Y, UPPER_ARM, upper);
-  const wrist = joint(elbow[0], elbow[1], FOREARM, upper - bend);
+  // the forearm hinges FORWARD off the elbow, which is what puts the elbow behind the hand.
+  // Subtracting the bend instead swung the forearm back and left the elbow leading the arm
+  // down the trail, which is not a joint people have.
+  const wrist = joint(elbow[0], elbow[1], FOREARM, upper + bend);
   return { elbow, wrist };
 }
 
@@ -643,6 +650,12 @@ export function walkCycleAt(phase: number): PoseGeometry {
       { x: near.ankle[0], y: near.ankle[1] + 2, hw: 18, rise: 26 },
     ],
     neckY: rigid(SPINE_X, 100, lean)[1],
+    /**
+     * Side-on the pack is behind him, not wrapped around him. Left at the front-on figure's
+     * width it straddled the narrowed trunk and showed past both shoulders, which reads as a
+     * pack worn on the wrong side as much as on both.
+     */
+    pack: { x: SPINE_X - 30, kx: 0.5, deg: TRUNK_LEAN },
     grip: ((): readonly [number, number] => {
       const [wx, wy] = leaned(nearArm.wrist);
       return [wx, wy + 8];
@@ -650,8 +663,8 @@ export function walkCycleAt(phase: number): PoseGeometry {
   };
 }
 
-/** A full stride, in seconds. A hiker with a pack turns one over in a little under a second. */
-export const STRIDE_SECONDS = 0.92;
+/** A full stride, in seconds. Loaded, on a climb, unhurried: the first pass at half this read as a trot. */
+export const STRIDE_SECONDS = 1.84;
 
 /** Non-numeric pose facts, by pose. */
 const POSE_FACTS: Readonly<Record<Pose, { sockCuff: boolean; prop: JSX.Element | null }>> = {
@@ -696,6 +709,7 @@ export function specOf(geometry: PoseGeometry, facts: { sockCuff: boolean; prop:
     ankles: geometry.ankles,
     neckY: geometry.neckY,
     ...(geometry.grip === undefined ? {} : { grip: geometry.grip }),
+    ...(geometry.pack === undefined ? {} : { pack: geometry.pack }),
     sockCuff: facts.sockCuff,
     prop: facts.prop,
     geometry,

@@ -441,9 +441,32 @@ const LEAN: Readonly<Record<Pose, number>> = { seated: 0, standing: 0, walking: 
 const FIGURE_CX = 0.44;
 const FIGURE_CX_NARROW = 0.4;
 
+/**
+ * The sleeper is the one pose that cannot sit on the common spot at the common size. Laid out
+ * it is about three times as long as the others are wide, so at full size and centred it reached
+ * into the fire and lay through it. It is drawn at 80% and set back to the left, far enough that
+ * the foot of the bag clears the hearth.
+ *
+ * This is a deliberate exception to "one size, one spot" rather than a retreat from it: the rule
+ * is there so the body does not appear to change between tabs, and a sleeper in a bag is not
+ * being compared to a standing figure by eye. Everything upright still shares both.
+ */
+const LYING_SCALE = 0.8;
+const LYING_CX = 0.3;
+const LYING_CX_NARROW = 0.26;
+
 function placement(pose: Pose, world: World): { fx: number; fy: number; scale: number; angle: number } {
   const angle = LEAN[pose];
-  return { ...stand(GEOMETRY[pose], angle, world), angle };
+  const stood = stand(GEOMETRY[pose], angle, world);
+  if (pose !== 'lying') return { ...stood, angle };
+  const scale = stood.scale * LYING_SCALE;
+  const e = extentsOf(GEOMETRY.lying, angle);
+  return {
+    fx: world.sx(world.narrow ? LYING_CX_NARROW : LYING_CX) - scale * ((e.minX + e.maxX) / 2),
+    fy: world.groundY - scale * e.maxY,
+    scale,
+    angle,
+  };
 }
 
 /**
@@ -655,6 +678,17 @@ export function Scene(props: SceneProps): JSX.Element {
    * it on the same line the feet stand on. It used to be three hardcoded coordinates taken off
    * the old front-on trail pose, so turning the walker side-on left it hanging in the air.
    */
+  /**
+   * The pack rides where the pose says, or square on the back as it always did. Side-on it has
+   * to move behind the spine and narrow, or it shows past both shoulders of a trunk that is now
+   * only 62% as wide as the one the pack art was drawn for.
+   */
+  const packTransform = ((): string => {
+    const at = spec.pack;
+    if (at === undefined) return '';
+    return `translate(${at.x} 0) rotate(${at.deg} 0 252) translate(${150 - at.x / at.kx} 0) scale(${at.kx} 1)`;
+  })();
+
   const pole = ((): { gx: number; gy: number; tx: number; ty: number } => {
     const [gx, gy] = spec.grip ?? [246, 244];
     const ty = Math.max(...spec.ankles.map((a) => a.y)) + 24;
@@ -714,19 +748,42 @@ export function Scene(props: SceneProps): JSX.Element {
 
   // --- extremity callouts, on the figure's left --------------------------------------------
   const outlines: Partial<Record<Region, string>> = {};
+  /**
+   * THE LABELS DO NOT BOB. A callout's leader ends on the body, which on the trail is moving:
+   * the limbs swing and the whole figure rises and falls through the stride. Taking the label's
+   * height from that made the text jitter up and down in time with the walk, which is unreadable
+   * and makes the body look unstable besides. So the leader keeps its live end on the body and
+   * the label takes its height from the stride's first frame, held still. The line pivots about
+   * the text; the text does not chase the line.
+   */
+  const stableFrame = ((): { at: (region: Region) => readonly [number, number] } | null => {
+    if (stride === null) return null;
+    const g = walkCycleAt(0);
+    const p = stand(g, angle, world);
+    const sp = specOf(g, poseFacts(target.pose));
+    return {
+      at: (region) => {
+        const [x, y] = sp.anchors[region].inner;
+        return [p.fx + p.scale * (x * Math.cos(rad) - y * Math.sin(rad)), p.fy + p.scale * (x * Math.sin(rad) + y * Math.cos(rad))];
+      },
+    };
+  })();
+
   const callouts = (props.annotations ?? [])
     .map((a) => {
       const [ax, ay] = toScene(...spec.anchors[a.region].inner);
       if (a.verdict !== 'fine') outlines[a.region] = a.colour;
-      return { ...a, ax, ay };
+      // `ay` is where the body is now; `sy` is where the label sits, which must not move
+      const sy = stableFrame === null ? ay : stableFrame.at(a.region)[1];
+      return { ...a, ax, ay, sy };
     })
-    .sort((a, b) => a.ay - b.ay);
+    .sort((a, b) => a.sy - b.sy);
   const figureLeft = Math.min(toScene(-20, 0)[0], toScene(-20, spec.h)[0]);
   const labelRight = figureLeft - 28;
   // labels keep 24 px apart, pushed down from their anchor's height when they would collide
   let lastY = Number.NEGATIVE_INFINITY;
   const placed = callouts.map((c) => {
-    const y = Math.max(c.ay, lastY + 24);
+    const y = Math.max(c.sy, lastY + 24);
     lastY = y;
     return { ...c, ly: y };
   });
@@ -913,7 +970,7 @@ export function Scene(props: SceneProps): JSX.Element {
       >
         {/* the pack on the back, drawn behind the torso; it shows past the shoulders and sides */}
         {live.packBack > 0.01 && (
-          <g opacity={live.packBack}>
+          <g opacity={live.packBack} transform={packTransform}>
             <path d="M 94 86 C 92 60, 208 60, 206 86 L 214 236 C 214 252, 86 252, 86 236 Z" fill="#2c3a2e" />
             <path d="M 100 92 C 110 80, 190 80, 200 92 L 204 128 C 180 118, 120 118, 96 128 Z" fill="#1f2a22" />
             <rect x={96} y={182} width={108} height={14} rx={7} fill="#1f2a22" />

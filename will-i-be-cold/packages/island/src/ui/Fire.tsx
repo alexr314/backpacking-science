@@ -125,6 +125,9 @@ const SPEED = 0.5;
  * `rise` and `period` were scaled together (x4), which quadruples both how high an ember
  * climbs and how long it lives while leaving its rise *speed* exactly as it was.
  */
+/** How many of the embers keep rising once the flame is out. Enough to read as alive, not as a fire. */
+const DYING_EMBERS = 3;
+
 const PARTICLES: readonly { readonly x: number; readonly rise: number; readonly r: number; readonly period: number; readonly offset: number; readonly sway: number }[] = [
   { x: 52, rise: 480, r: 2.2, period: 9.6, offset: 0, sway: 5 },
   { x: 70, rise: 560, r: 1.8, period: 12.4, offset: 0.4, sway: -6 },
@@ -165,6 +168,8 @@ export function Fire({ uid, lit, present }: FireProps): JSX.Element {
   const clock = useRef<{ t0: number; ignited: number | null; extinguished: number | null }>({ t0: 0, ignited: null, extinguished: null });
   const ready = present >= 0.9;
   const burning = lit && ready;
+  /** Logs on the ground with no flame on them: the night scene. */
+  const emberOnly = ready && !lit;
 
   // follow the OS setting if it changes while the panel is open
   useEffect(() => {
@@ -219,22 +224,33 @@ export function Fire({ uid, lit, present }: FireProps): JSX.Element {
         const el = particleRefs.current[i];
         if (el === null || el === undefined) return;
         const u = (s / pt.period + pt.offset) % 1;
-        if (!wasLit(s - u * pt.period, c.ignited, c.extinguished)) {
+        const flaming = wasLit(s - u * pt.period, c.ignited, c.extinguished);
+        /**
+         * A fire that is out is not a fire that is gone. The night scene keeps its logs (the
+         * tab asks for the hearth without the flame, and its own caption says "the fire out to
+         * a few embers"), and a bed of coals throws the odd spark for hours. So when the hearth
+         * is present but unlit, the first few embers still rise: fewer of them, dimmer, and not
+         * as far, since there is no column of hot air left to carry them.
+         */
+        const dying = !flaming && emberOnly && i < DYING_EMBERS;
+        if (!flaming && !dying) {
           el.setAttribute('opacity', '0');
           return;
         }
-        anyAlive = true;
+        anyAlive = anyAlive || flaming;
+        const rise = flaming ? pt.rise : pt.rise * 0.34;
+        const peak = flaming ? 0.85 : 0.4;
         el.setAttribute('cx', (pt.x + pt.sway * Math.sin(u * Math.PI * 2 + i)).toFixed(1));
-        el.setAttribute('cy', (112 - u * pt.rise).toFixed(1));
-        el.setAttribute('r', (pt.r * (1 - u)).toFixed(2));
-        el.setAttribute('opacity', (0.85 * (1 - u) * Math.min(1, u * 6)).toFixed(3));
+        el.setAttribute('cy', (112 - u * rise).toFixed(1));
+        el.setAttribute('r', (pt.r * (1 - u) * (flaming ? 1 : 0.8)).toFixed(2));
+        el.setAttribute('opacity', (peak * (1 - u) * Math.min(1, u * 6)).toFixed(3));
       });
       // keep ticking while lit, or while anything born before it went out is still living
-      if (burning || anyAlive || (c.extinguished !== null && s - c.extinguished < 14)) raf = requestAnimationFrame(tick);
+      if (burning || emberOnly || anyAlive || (c.extinguished !== null && s - c.extinguished < 14)) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [animate, burning]);
+  }, [animate, burning, emberOnly]);
 
   const emberStyle = { transition: 'opacity 1800ms ease' };
 
