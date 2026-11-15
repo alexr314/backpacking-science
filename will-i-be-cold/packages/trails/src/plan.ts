@@ -34,6 +34,18 @@ export interface RouteSpec {
   /** Hour of the day walking begins, local, e.g. 8 for 08:00. */
   readonly startHour: number;
   readonly pace: PaceModel;
+  /**
+   * Where each night is spent, metres along the trail, in walking order. Given these, the days
+   * are these and the pace model only reports how long each takes.
+   *
+   * WHY THIS IS THE BETTER INPUT. Splitting a route into equal days of walking is a fiction:
+   * people camp at shelters, at water, at gaps, and the last day is usually short because it
+   * ends at a car. An even split cannot know any of that, and quietly asserts a schedule nobody
+   * will walk. When the walker names the camps the plan stops guessing, and the pace model does
+   * the job it is actually good at, which is saying how long a named day will take rather than
+   * inventing where a day should end. The even split stays as the opening suggestion.
+   */
+  readonly camps?: readonly number[];
 }
 
 /** One day of the walk, with the points its phases are forecast at. */
@@ -102,6 +114,8 @@ export function planRoute(trail: Trail, spec: RouteSpec): RoutePlan {
   const profile = { along: trail.along, ele: trail.ele };
   const perDay = pace.movingHoursPerDay * 3600;
 
+  if (spec.camps !== undefined) return planByCamps(trail, spec, spec.camps, forward, profile);
+
   const days: RouteDay[] = [];
   let at = startM;
   for (let d = 0; d < MAX_DAYS; d += 1) {
@@ -138,6 +152,58 @@ export function planRoute(trail: Trail, spec: RouteSpec): RoutePlan {
     climb: whole.climb,
     descent: whole.descent,
     nights: Math.max(0, days.length - 1),
+  };
+}
+
+/** One day per leg between the named camps, with the last leg running to the end of the route. */
+function planByCamps(
+  trail: Trail,
+  spec: RouteSpec,
+  camps: readonly number[],
+  forward: boolean,
+  profile: { along: ArrayLike<number>; ele: ArrayLike<number> },
+): RoutePlan {
+  const { startM, endM, pace } = spec;
+  const between = (x: number): boolean => (forward ? x > startM && x < endM : x < startM && x > endM);
+  for (const [i, c] of camps.entries()) {
+    if (!Number.isFinite(c) || !between(c)) {
+      throw new RoutePlanError(`Camp ${i + 1} is not on the route between its start and its end.`);
+    }
+    const prev = i === 0 ? startM : camps[i - 1]!;
+    if (forward ? c <= prev : c >= prev) {
+      throw new RoutePlanError(`Camp ${i + 1} is not past camp ${i}: the camps must be in walking order.`);
+    }
+  }
+  if (camps.length + 1 > MAX_DAYS) throw new RoutePlanError(`A route may have at most ${MAX_DAYS} days.`);
+
+  const edges = [startM, ...camps, endM];
+  const days: RouteDay[] = edges.slice(0, -1).map((from, i) => {
+    const to = edges[i + 1]!;
+    const seconds = walkSeconds(profile, from, to, pace.fitness);
+    const half = advance(profile, from, seconds / 2, forward, pace.fitness);
+    const relief = reliefBetween(trail, from, to);
+    return {
+      date: addDays(spec.startDate, i),
+      start: pointAt(trail, from),
+      camp: pointAt(trail, to),
+      midday: pointAt(trail, half),
+      distance: Math.abs(to - from),
+      climb: relief.climb,
+      descent: relief.descent,
+      movingSeconds: seconds,
+      arrives: i === edges.length - 2,
+    };
+  });
+
+  const whole = reliefBetween(trail, startM, endM);
+  return {
+    trail: trail.slug,
+    direction: forward ? 'northbound' : 'southbound',
+    days,
+    distance: Math.abs(endM - startM),
+    climb: whole.climb,
+    descent: whole.descent,
+    nights: camps.length,
   };
 }
 

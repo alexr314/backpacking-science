@@ -109,6 +109,59 @@ describe('planRoute', () => {
   });
 });
 
+describe('planRoute with named camps', () => {
+  it('makes one day per leg, and the nights are the camps', () => {
+    const t = trail();
+    const p = planRoute(t, { ...spec, endM: 50000, camps: [12000, 31000] });
+    expect(p.days).toHaveLength(3);
+    expect(p.nights).toBe(2);
+    expect(p.days[0]!.camp.along).toBeCloseTo(12000, 6);
+    expect(p.days[1]!.camp.along).toBeCloseTo(31000, 6);
+    expect(p.days[2]!.camp.along).toBeCloseTo(50000, 6);
+  });
+
+  it('lets the last day be a short one, which an even split cannot', () => {
+    const t = trail();
+    const p = planRoute(t, { ...spec, endM: 50000, camps: [20000, 44000] });
+    const last = p.days[p.days.length - 1]!;
+    expect(last.distance).toBeLessThan(p.days[0]!.distance);
+    expect(last.arrives).toBe(true);
+    expect(p.days.filter((d) => d.arrives)).toHaveLength(1);
+  });
+
+  it('still covers the whole route with no gaps', () => {
+    const p = planRoute(trail(), { ...spec, endM: 50000, camps: [9000, 25000, 40000] });
+    expect(p.days.reduce((s, d) => s + d.distance, 0)).toBeCloseTo(50000, 6);
+    for (let i = 1; i < p.days.length; i += 1) {
+      expect(p.days[i]!.start.along).toBeCloseTo(p.days[i - 1]!.camp.along, 6);
+    }
+  });
+
+  it('reports how long each named day takes rather than choosing its length', () => {
+    const t = trail();
+    const slow = planRoute(t, { ...spec, endM: 50000, camps: [25000], pace: { ...DEFAULT_PACE, fitness: 0.4 } });
+    const fast = planRoute(t, { ...spec, endM: 50000, camps: [25000], pace: { ...DEFAULT_PACE, fitness: 0.9 } });
+    expect(slow.days).toHaveLength(fast.days.length);
+    expect(slow.days[0]!.distance).toBeCloseTo(fast.days[0]!.distance, 6);
+    expect(slow.days[0]!.movingSeconds).toBeGreaterThan(fast.days[0]!.movingSeconds);
+  });
+
+  it('works walking the other way', () => {
+    const p = planRoute(trail(), { ...spec, startM: 50000, endM: 5000, camps: [38000, 20000] });
+    expect(p.direction).toBe('southbound');
+    expect(p.days).toHaveLength(3);
+    expect(p.days[0]!.camp.along).toBeCloseTo(38000, 6);
+  });
+
+  it('refuses camps that are not on the route, or not in order', () => {
+    const t = trail();
+    expect(() => planRoute(t, { ...spec, endM: 50000, camps: [60000] })).toThrow(RoutePlanError);
+    expect(() => planRoute(t, { ...spec, endM: 50000, camps: [0] })).toThrow(RoutePlanError);
+    expect(() => planRoute(t, { ...spec, endM: 50000, camps: [30000, 12000] })).toThrow(/walking order/);
+    expect(() => planRoute(t, { ...spec, startM: 50000, endM: 5000, camps: [20000, 38000] })).toThrow(/walking order/);
+  });
+});
+
 describe('forecastPoints', () => {
   it('asks for two points a day, camps first', () => {
     const p = planRoute(trail(), { ...spec, endM: 40000 });
