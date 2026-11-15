@@ -44,9 +44,9 @@
  */
 
 import type { JSX } from 'preact';
-import { useMemo, useRef } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Verdict } from '@will-i-be-cold/heat';
-import { Figure, GEOMETRY, GETTING_DOWN, extentsOf, lerpGeometry, poseFacts, specOf, type Pose, type PoseGeometry } from './Figure.js';
+import { Figure, GEOMETRY, STRIDE_SECONDS, extentsOf, lerpGeometry, poseFacts, specOf, walkCycleAt, type Pose, type PoseGeometry } from './Figure.js';
 import { Fire } from './Fire.js';
 import { SKY_STOP_FRACTIONS, STARS, lerpProgress, overcastAt, skyAt } from './Sky.js';
 import type { Outfit, Region } from '../model/kit.js';
@@ -330,6 +330,8 @@ interface Live {
   readonly bag: number;
   readonly pole: number;
   readonly overcast: number;
+  /** The body's own opacity. 1 except through a cut, where the figure dims while the pose swaps. */
+  readonly figure: number;
 }
 
 const ln = (a: number, b: number, u: number): number => a + (b - a) * u;
@@ -349,6 +351,7 @@ function blendLive(a: Live, b: Live, u: number): Live {
     bag: ln(a.bag, b.bag, u),
     pole: ln(a.pole, b.pole, u),
     overcast: ln(a.overcast, b.overcast, u),
+    figure: ln(a.figure, b.figure, u),
   };
 }
 
@@ -366,105 +369,41 @@ function sameLive(a: Live, b: Live): boolean {
     a.packGround === b.packGround &&
     a.bag === b.bag &&
     a.pole === b.pole &&
-    a.overcast === b.overcast
+    a.overcast === b.overcast &&
+    a.figure === b.figure
   );
 }
 
 /**
- * GETTING DOWN TO THE MAT, AND BACK UP.
+ * GOING TO SLEEP IS A CUT, NOT A MOVE.
  *
- * Lying down used to be one lerp: the seated figure morphing into the standing one turned on
- * its side, which the client rightly called "just sort of morphs". The real motion is a
- * sequence (`GETTING_DOWN` in `Figure.tsx`, where the poses and his description of them live),
- * so the walk between those two targets passes through three fixed stops instead of going
- * straight. Each leg is still an ordinary `blendLive`, which is what keeps the garment art,
- * the props and the sky coming along: only the path through the space changed, not the space.
+ * This used to be a choreographed descent: turn, kneel, plant a hand, fold out flat, through
+ * three built poses. It worked mechanically and never earned its keep. A figure this stylised
+ * has no spine, no weight and no joint that can take a load, so every intermediate pose read as
+ * a shape being repositioned rather than a person getting down, and the closer the staging got
+ * to correct the more the body itself gave the game away. The client called it: stop trying.
  *
- * Non-geometric fields (the fire, the log, the bag, the sun) are not pinned at the stops. A
- * stop takes them at its own fraction of the motion, so they still run smoothly end to end
- * while the body takes the scenic route.
+ * So the body crossfades. The figure dims out in whatever pose it is in, the pose swaps at the
+ * bottom of the dip, and it comes back up lying on the mat. Everything that is not the body (the
+ * sky, the sun, the fire, the mat) keeps tweening straight through, so the scene still changes
+ * continuously around a character who simply is not shown making an impossible movement.
+ *
+ * An edit the eye forgives beats an interpolation it does not believe.
  */
-interface DownStop {
-  readonly geometry: PoseGeometry;
-  readonly fx: number;
-  readonly fy: number;
-  readonly scale: number;
-  /** Fraction of the whole motion spent reaching this stop from the one before. */
-  readonly w: number;
-}
+
+/** How far the figure dims at the bottom of the cut. Not to zero: a ghost keeps the eye in place. */
+const CUT_FLOOR = 0.06;
+
+/** Does this change of pose get cut rather than morphed? Lying is the only pose worth hiding. */
+const isCut = (from: Pose, to: Pose): boolean => from !== to && (from === 'lying' || to === 'lying');
 
 /**
- * The four legs: turn, down onto the knees, reach the hand to the ground, fold out flat. The
- * turn is quick and the two that carry weight are slow, which is how the motion actually goes.
+ * The figure's opacity through a cut, and which end's body to draw. `u` is the walk's own eased
+ * progress, so the swap lands at the darkest point rather than at the half-second mark.
  */
-const DOWN_LEGS: readonly number[] = [0.16, 0.3, 0.24, 0.3];
-
-/** The stops for a move onto the mat or off it, already placed; empty when neither end is lying. */
-function downRoute(from: Pose, to: Pose, world: World): readonly DownStop[] {
-  const down = to === 'lying' && from !== 'lying';
-  const up = from === 'lying' && to !== 'lying';
-  if (!down && !up) return [];
-  const order = down ? [0, 1, 2] : [2, 1, 0];
-  // the weight of the leg arriving at each stop: read forwards going down, backwards coming up
-  const weights = down ? [DOWN_LEGS[0]!, DOWN_LEGS[1]!, DOWN_LEGS[2]!] : [DOWN_LEGS[3]!, DOWN_LEGS[2]!, DOWN_LEGS[1]!];
-  return order.map((i, n) => {
-    const geometry = GETTING_DOWN[i]!;
-    // every stop stands on the same ground at the same spot, so getting down is the body folding
-    // rather than the body travelling
-    return { geometry, ...stand(geometry, 0, world), w: weights[n]! };
-  });
-}
-
-/** A field that runs on its own schedule: 0 before `from`, 1 after `to`, smooth between. */
-function ramp(u: number, from: number, to: number): number {
-  const t = Math.min(1, Math.max(0, (u - from) / (to - from)));
-  return t * t * (3 - 2 * t);
-}
-
-/**
- * Two props do not belong on the body's clock, and the order they take is the order a person
- * does them in. Going down, the log goes early (you are off it as soon as you turn and kneel)
- * and the bag comes late (it is what you get into once you are flat). Getting up, both
- * reverse: the bag comes off first, and the log is there to sit on at the end.
- *
- * Left on the straight blend, going down the bag faded in over the middle of the motion and
- * covered the whole descent, so the choreography was invisible: it looked from the outside
- * exactly like the morph it replaced. Getting up, the bag stayed on to the end and swung
- * upright with the figure, which is worse than either.
- */
-const EARLY: readonly [number, number] = [0, 0.2];
-const LATE: readonly [number, number] = [0.76, 1];
-
-/** `a` at u = 0 and `b` at u = 1, by way of the route; with no stops, the plain blend. */
-function lerpAlong(route: { readonly down: boolean; readonly stops: readonly DownStop[] }, a: Live, b: Live, u: number): Live {
-  const { down, stops } = route;
-  if (stops.length === 0) return blendLive(a, b, u);
-  if (u <= 0) return a;
-  if (u >= 1) return b;
-  const logAt = down ? EARLY : LATE;
-  const bagAt = down ? LATE : EARLY;
-  const scheduled = (v: Live): Live => ({
-    ...v,
-    log: ln(a.log, b.log, ramp(u, logAt[0], logAt[1])),
-    bag: ln(a.bag, b.bag, ramp(u, bagAt[0], bagAt[1])),
-  });
-  const legs = [...stops.map((st) => st.w), Math.max(0.05, 1 - stops.reduce((t, st) => t + st.w, 0))];
-  const total = legs.reduce((t, x) => t + x, 0);
-  let acc = 0;
-  for (let i = 0; i < legs.length; i += 1) {
-    const seg = legs[i]! / total;
-    const last = i === legs.length - 1;
-    if (u <= acc + seg || last) {
-      const t = seg <= 0 ? 1 : Math.min(1, (u - acc) / seg);
-      // a stop's own Live: the stop's body, everything else taken at the stop's point in the motion
-      const at = (st: DownStop, f: number): Live => ({ ...blendLive(a, b, f), geometry: st.geometry, fx: st.fx, fy: st.fy, scale: st.scale, angle: 0 });
-      const prev = i === 0 ? a : at(stops[i - 1]!, acc);
-      const next = last ? b : at(stops[i]!, acc + seg);
-      return scheduled(blendLive(prev, next, t));
-    }
-    acc += seg;
-  }
-  return b;
+function cutAt(u: number): { readonly opacity: number; readonly showTo: boolean } {
+  const d = Math.abs(2 * u - 1);
+  return { opacity: CUT_FLOOR + (1 - CUT_FLOOR) * d * d, showTo: u >= 0.5 };
 }
 
 /** The stage's fixed frame for the little scene: where the figure, the fire and the clearing are. */
@@ -518,16 +457,58 @@ function stand(geometry: PoseGeometry, angle: number, world: World): { fx: numbe
   const scale = (unit * (narrow ? 0.56 : 0.62)) / GEOMETRY.seated.h;
   const e = extentsOf(geometry, angle);
   return {
-    fx: sx(narrow ? FIGURE_CX_NARROW : FIGURE_CX) - scale * ((e.minX + e.maxX) / 2),
+    fx: sx(narrow ? FIGURE_CX_NARROW : FIGURE_CX) - scale * trunkX(geometry, angle),
     fy: groundY - scale * e.maxY,
     scale,
   };
 }
 
+/**
+ * Where the body is, horizontally: the middle of the trunk, not the middle of everything drawn.
+ * A walker's arms and legs swing a long way either side of it, so centring the bounding box
+ * would slide the whole figure back and forth in time with the stride. The trunk does not swing.
+ */
+function trunkX(geometry: PoseGeometry, deg: number): number {
+  const part = geometry.body.torso[0];
+  if (part === undefined) return 150;
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const sn = Math.sin(r);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < part.pts.length; i += 2) {
+    const x = part.pts[i]! * c - part.pts[i + 1]! * sn;
+    if (x < lo) lo = x;
+    if (x > hi) hi = x;
+  }
+  return (lo + hi) / 2;
+}
+
 const GLOW_MS = 3600;
 const SCENE_MS = 1500;
-/** Getting down to the mat is four legs, not one, so it is given the time to read as a motion. */
-const GET_DOWN_MS = 2800;
+
+/**
+ * The stride clock. Every other motion in this scene is a walk between two states with an end;
+ * this one has no destination, so it cannot be a tween. It is a free-running phase, alive only
+ * while the trail tab is on screen and the arrival has settled, and frozen at a readable point
+ * in the stride for anyone who asked not to be moved at.
+ */
+function useStridePhase(active: boolean): number {
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    const still = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!active || still) return;
+    let raf = 0;
+    const t0 = performance.now();
+    const tick = (now: number): void => {
+      setPhase((((now - t0) / 1000 / STRIDE_SECONDS) % 1 + 1) % 1);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active]);
+  return phase;
+}
 const lerpGlow = (a: number, b: number, u: number): number => ln(a, b, u);
 const sameN = (a: number, b: number): boolean => a === b;
 
@@ -574,6 +555,7 @@ export function Scene(props: SceneProps): JSX.Element {
       bag: target.bag,
       pole: target.pole,
       overcast: target.overcast,
+      figure: 1,
     };
   }, [target, world]);
   // a new tab target walks; a re-measured cell (the same target, moved) retargets the walk in flight or snaps at rest
@@ -592,19 +574,34 @@ export function Scene(props: SceneProps): JSX.Element {
    * ref it survives, and the retarget keeps the original clock. The placements are rebuilt on
    * those renders because the re-measure is exactly when the world has moved under them.
    */
-  const routeRef = useRef<{ from: Pose; to: Pose; down: boolean; stops: readonly DownStop[] }>({ from: target.pose, to: target.pose, down: true, stops: [] });
-  if (walk) {
-    routeRef.current = { from: fromPose, to: target.pose, down: target.pose === 'lying', stops: downRoute(fromPose, target.pose, world) };
-  } else if (routeRef.current.stops.length > 0) {
-    routeRef.current = { ...routeRef.current, stops: downRoute(routeRef.current.from, routeRef.current.to, world) };
-  }
-  const lerpRouted = (a: Live, b: Live, u: number): Live => lerpAlong(routeRef.current, a, b, u);
-  const ms = routeRef.current.stops.length > 0 ? GET_DOWN_MS : SCENE_MS;
-  const live = useTween(liveTarget, lerpRouted, walk ? ms : 0, sameLive);
+  const cutRef = useRef(false);
+  if (walk) cutRef.current = isCut(fromPose, target.pose);
+  /**
+   * A cut holds the body still at each end and swaps it in the dark; only the opacity moves.
+   * It has to survive the re-measure a frame after a tab change, which re-fires the tween's
+   * effect with this render's lerp, so like the route it used to carry, it lives in a ref.
+   */
+  const lerpCut = (a: Live, b: Live, u: number): Live => {
+    if (!cutRef.current) return blendLive(a, b, u);
+    const { opacity, showTo } = cutAt(u);
+    const body = showTo ? b : a;
+    return { ...blendLive(a, b, u), geometry: body.geometry, fx: body.fx, fy: body.fy, scale: body.scale, angle: body.angle, bag: showTo ? b.bag : a.bag, log: showTo ? b.log : a.log, figure: opacity };
+  };
+  const live = useTween(liveTarget, lerpCut, walk ? SCENE_MS : 0, sameLive);
   const glow = useTween(target.lit && target.hearth > 0.5 ? 1 : 0, lerpGlow, GLOW_MS, sameN);
 
   const sky = overcastAt(skyAt(live.p), live.overcast);
-  const spec = specOf(live.geometry, poseFacts(target.pose));
+  /**
+   * On the trail the body comes off the tween and onto the stride clock, but only once the
+   * arrival has finished: the walk in is still a morph from whatever pose the last tab left,
+   * and it would fight a cycle running underneath it. Standing the cycle every frame is what
+   * keeps the planted foot on the ground while the hips rise and fall over it.
+   */
+  const striding = target.pose === 'walking';
+  const phase = useStridePhase(striding);
+  const stride = striding && sameLive(live, liveTarget) ? walkCycleAt(phase) : null;
+  const body = stride ?? live.geometry;
+  const spec = specOf(body, poseFacts(target.pose));
   const lit = glow > 0.5 || sky.altitude > 0.05;
 
   // --- the sun and the moon on one arc, east (left) to west (right) ----------------------
@@ -646,12 +643,24 @@ export function Scene(props: SceneProps): JSX.Element {
   const fireCy = fireY + 100 * fireScale;
 
   // --- the figure ----------------------------------------------------------------------
-  const { fx, fy, scale: s, angle } = live;
+  const { angle } = live;
+  const { fx, fy, scale: s } = stride === null ? live : stand(stride, angle, world);
   const rad = (angle * Math.PI) / 180;
   const toScene = (x: number, y: number): readonly [number, number] => [
     fx + s * (x * Math.cos(rad) - y * Math.sin(rad)),
     fy + s * (x * Math.sin(rad) + y * Math.cos(rad)),
   ];
+  /**
+   * The pole, in the figure's own frame: held at the pose's grip and planted a little ahead of
+   * it on the same line the feet stand on. It used to be three hardcoded coordinates taken off
+   * the old front-on trail pose, so turning the walker side-on left it hanging in the air.
+   */
+  const pole = ((): { gx: number; gy: number; tx: number; ty: number } => {
+    const [gx, gy] = spec.grip ?? [246, 244];
+    const ty = Math.max(...spec.ankles.map((a) => a.y)) + 24;
+    return { gx, gy, tx: gx + 22, ty };
+  })();
+
   const figureTransform = `translate(${fx.toFixed(1)} ${fy.toFixed(1)}) rotate(${angle.toFixed(2)}) scale(${s.toFixed(4)})`;
   // the pool of dusk under the figure follows its body's centre
   const [poolX, poolY] = toScene(150, spec.h * 0.5);
@@ -881,7 +890,7 @@ export function Scene(props: SceneProps): JSX.Element {
 
       {/* the mat, flat on the ground where the sleeper lies, under everything the body does */}
       {live.bag > 0.01 && (
-        <g opacity={live.bag}>
+        <g opacity={live.bag * live.figure}>
           <rect x={mat.x} y={mat.y} width={mat.w} height={mat.h} rx={mat.h / 2} fill="#3a2e22" />
           <rect x={mat.x + 6} y={mat.y + 3} width={Math.max(0, mat.w - 12)} height={4} rx={2} fill="#5a4833" opacity="0.8" />
         </g>
@@ -889,6 +898,7 @@ export function Scene(props: SceneProps): JSX.Element {
 
       <g
         transform={figureTransform}
+        opacity={live.figure}
         className="wibc-scene-figure"
         role="button"
         tabindex={0}
@@ -941,10 +951,10 @@ export function Scene(props: SceneProps): JSX.Element {
         {/* a trekking pole in the leading hand */}
         {live.pole > 0.01 && (
           <g opacity={live.pole}>
-            <line x1={246} y1={244} x2={266} y2={478} stroke="#8d97b0" stroke-width="4" stroke-linecap="round" />
-            <line x1={246} y1={244} x2={266} y2={478} stroke="#150f24" stroke-width="7" stroke-linecap="round" opacity="0.5" />
-            <line x1={246} y1={244} x2={266} y2={478} stroke="#8d97b0" stroke-width="3.5" stroke-linecap="round" />
-            <circle cx={262} cy={458} r={7} fill="#3c4257" />
+            {/* the pole hangs off the hand that holds it, so it plants where the walker actually is */}
+            <line x1={pole.gx} y1={pole.gy} x2={pole.tx} y2={pole.ty} stroke="#150f24" stroke-width="7" stroke-linecap="round" opacity="0.5" />
+            <line x1={pole.gx} y1={pole.gy} x2={pole.tx} y2={pole.ty} stroke="#8d97b0" stroke-width="3.5" stroke-linecap="round" />
+            <circle cx={pole.tx - (pole.tx - pole.gx) * 0.08} cy={pole.ty - 20} r={7} fill="#3c4257" />
           </g>
         )}
         {/* one hit target over the whole character */}

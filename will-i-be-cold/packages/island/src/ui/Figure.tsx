@@ -77,6 +77,8 @@ export interface PoseGeometry {
   readonly headTop: readonly [number, number];
   readonly ankles: readonly { readonly x: number; readonly y: number; readonly hw: number; readonly rise: number }[];
   readonly neckY: number;
+  /** Where a trekking pole is held, when this pose holds one. The scene hangs the pole off it. */
+  readonly grip?: readonly [number, number];
 }
 
 /** A pose as a scene or the gear tab sees it: geometry plus the few things that are not numbers. */
@@ -97,6 +99,8 @@ export interface PoseSpec {
    * cuff there, and how far up the leg a cuff of ordinary height reaches in this pose.
    */
   readonly ankles: PoseGeometry['ankles'];
+  /** Where a trekking pole is held, when this pose holds one. */
+  readonly grip?: readonly [number, number];
   /** Where the neck meets the torso: the split view's divide starts here, so the head stays whole. */
   readonly neckY: number;
   /** Whether a sock's cuff shows above the shoe. Seated, the ankle is tucked and it reads wrong. */
@@ -388,47 +392,31 @@ const WALKING_GEOMETRY: PoseGeometry = {
   ],
 };
 
-// ---------------------------------------------------------------------------------------------
-// Getting down: the poses between sitting on the log and lying on the mat
-// ---------------------------------------------------------------------------------------------
-
 /**
- * THE MOTION, AS THE CLIENT ACTED IT OUT. Lying down was a single lerp from the seated figure
- * to the standing one turned on its side, which reads as a shape dissolving rather than a
- * person getting down. He did it on his floor and described it: turn to face where the head
- * will end up (left on screen); one knee up toward the right and the other on the floor with
- * that foot sticking out behind, rectilinear, sitting straight up; the arm goes down and you
- * lean forward so it can reach; then you straighten and fold down to the floor.
- *
- * So it is four legs through three intermediate poses, not one morph: seated, TURNED,
- * KNEELING, PLANTING, lying. Each leg is still an interpolation, which is what lets the
- * existing machinery carry it (`lerpGeometry`, and the garment art that reads the pose's
- * geometry at draw time).
- *
- * THEY ARE BUILT, NOT DRAWN. Every pose here is a rigid transform of parts of the seated and
- * standing figures plus respecified limb polylines. That is deliberate: the topology then
- * matches for free (same parts, same kinds, same segment counts, same order), where drawing
- * two more figures by hand and hoping `matchTopology` reconciled them is the version of this
- * that silently breaks the garment pieces, which are arc-length slices of these very paths.
+ * Rigid transform of a part's control points: rotate `deg` about `(ax, ay)`, then translate.
+ * Poses that are variations of another are built with this rather than drawn fresh, which keeps
+ * the topology identical for free: the same parts, the same segment counts, the same order.
  */
-
 interface Rigid {
   readonly dx?: number;
   readonly dy?: number;
-  /** Clockwise, SVG's sense, applied about `(ax, ay)` before the translation. */
+  /** Clockwise, SVG's sense, applied about `(ax, ay)` after the scale. */
   readonly deg?: number;
+  /** Scale about `(ax, ay)`: `kx` under 1 is what turns a front-on part edge-on. */
+  readonly kx?: number;
+  readonly ky?: number;
   readonly ax?: number;
   readonly ay?: number;
 }
 
 function rigid(x: number, y: number, o: Rigid): [number, number] {
-  const { dx = 0, dy = 0, deg = 0, ax = 0, ay = 0 } = o;
-  if (deg === 0) return [x + dx, y + dy];
+  const { dx = 0, dy = 0, deg = 0, kx = 1, ky = 1, ax = 0, ay = 0 } = o;
+  const px = (x - ax) * kx;
+  const py = (y - ay) * ky;
+  if (deg === 0) return [ax + px + dx, ay + py + dy];
   const r = (deg * Math.PI) / 180;
   const c = Math.cos(r);
   const sn = Math.sin(r);
-  const px = x - ax;
-  const py = y - ay;
   return [ax + px * c - py * sn + dx, ay + px * sn + py * c + dy];
 }
 
@@ -442,7 +430,7 @@ function xform<T extends GeomPart>(part: T, o: Rigid): T {
   return { ...part, pts };
 }
 
-/** A limb straight from its joints, so the poses below can be written as positions rather than path strings. */
+/** A limb straight from its joints, so a pose can be written as positions rather than a path string. */
 const poly = (pts: readonly (readonly [number, number])[], w: number): LinePart => ({
   kind: 'line',
   pts: pts.flatMap(([x, y]) => [x, y]),
@@ -466,151 +454,10 @@ function centreAt(part: BlobPart, x: number, y: number): BlobPart {
   return xform(part, { dx: x - cx, dy: y - cy });
 }
 
-const S = SEATED_GEOMETRY.body;
-
-/**
- * TURNED. Still on the log, now in profile: the head comes round to the left, the far arm
- * tucks in behind the near one and both knees swing to the same side, so the silhouette
- * narrows from a figure facing you to one facing where it is about to go. The log is still
- * under it, so this pose keeps the seated frame and the seated placement.
- */
-const TURNED_GEOMETRY: PoseGeometry = {
-  w: 300,
-  h: 380,
-  body: {
-    head: [xform(S.head[0]!, { dx: -8 }), poly([[142, 86], [144, 93], [147, 100]], 22)],
-    torso: [
-      xform(S.torso[0]!, { dx: -3 }),
-      poly([[104, 112], [88, 172], [99, 214]], 22),
-      poly([[190, 112], [173, 170], [182, 212]], 22),
-    ],
-    legs: [
-      poly([[138, 206], [92, 238], [86, 262]], 30),
-      poly([[160, 208], [112, 246], [106, 268]], 30),
-      xform(S.legs[2]!, { dx: -2 }),
-    ],
-    hands: [centreAt(S.hands[0]! as BlobPart, 97, 224), centreAt(S.hands[1]! as BlobPart, 181, 222)],
-    feet: [centreAt(S.feet[0]! as BlobPart, 80, 272), centreAt(S.feet[1]! as BlobPart, 99, 278)],
-  },
-  anchors: {
-    head: { inner: [120, 52], outer: [168, 52] },
-    torso: { inner: [115, 150], outer: [181, 150] },
-    legs: { inner: [100, 236], outer: [196, 232] },
-    hands: { inner: [97, 238], outer: [185, 236] },
-    feet: { inner: [80, 284], outer: [112, 288] },
-  },
-  headTop: [142, 24],
-  ankles: [
-    { x: 86, y: 266, hw: 15, rise: 22 },
-    { x: 106, y: 272, hw: 15, rise: 22 },
-  ],
-  neckY: 98,
-};
-
-/** The ground in the upright transition frames: where a planted foot or hand rests. */
-const DOWN_GROUND_Y = 470;
-/** Where the hips sit once the figure is down on its knees, and how far that is below the seated hips. */
-const KNEEL_HIP_Y = 396;
-const KNEEL_DY = KNEEL_HIP_Y - 216;
-
-/**
- * KNEELING. Down off the log and rectilinear, as he described it: sitting straight up, the near
- * knee up toward the right, the far knee on the floor with its shin and foot run out behind to
- * the right. The upper body is the seated one dropped straight down, so nothing about the torso
- * changes on this leg and the eye reads only the legs folding under.
- */
-const KNEELING_GEOMETRY: PoseGeometry = {
-  w: 300,
-  h: 500,
-  body: {
-    head: [xform(S.head[0]!, { dx: -8, dy: KNEEL_DY }), poly([[142, 86 + KNEEL_DY], [144, 93 + KNEEL_DY], [147, 100 + KNEEL_DY]], 22)],
-    torso: [
-      xform(S.torso[0]!, { dx: -3, dy: KNEEL_DY }),
-      poly([[104, 292], [94, 350], [98, 404]], 22),
-      poly([[190, 292], [182, 350], [186, 402]], 22),
-    ],
-    legs: [
-      // the near knee up toward the right, shin dropping to a planted foot
-      poly([[142, 390], [196, 370], [205, 456]], 30),
-      // the far knee on the floor, the shin and the foot run out behind
-      poly([[158, 398], [186, 450], [250, 462]], 30),
-      xform(S.legs[2]!, { dx: -2, dy: KNEEL_DY }),
-    ],
-    hands: [centreAt(S.hands[0]! as BlobPart, 97, 414), centreAt(S.hands[1]! as BlobPart, 186, 412)],
-    feet: [centreAt(S.feet[0]! as BlobPart, 199, 464), centreAt(S.feet[1]! as BlobPart, 256, 468)],
-  },
-  anchors: {
-    head: { inner: [120, 52 + KNEEL_DY], outer: [168, 52 + KNEEL_DY] },
-    torso: { inner: [112, 330], outer: [188, 330] },
-    legs: { inner: [128, 420], outer: [214, 396] },
-    hands: { inner: [93, 428], outer: [192, 426] },
-    feet: { inner: [196, 478], outer: [262, 480] },
-  },
-  headTop: [142, 24 + KNEEL_DY],
-  ankles: [
-    { x: 205, y: 456, hw: 15, rise: 22 },
-    { x: 250, y: 462, hw: 15, rise: 22 },
-  ],
-  neckY: 98 + KNEEL_DY,
-};
-
-/** How far the trunk tips forward to put the hand on the ground, about the hips. */
-const PLANT_LEAN = -34;
-const PLANT_PIVOT: Rigid = { deg: PLANT_LEAN, ax: 150, ay: KNEEL_HIP_Y };
-const K = KNEELING_GEOMETRY.body;
-/** The shoulders after the lean, so the arms can be written from where they actually hang. */
-const [PL_SX, PL_SY] = rigid(104, 292, PLANT_PIVOT);
-const [PR_SX, PR_SY] = rigid(190, 292, PLANT_PIVOT);
-
-/**
- * PLANTING. The arm goes down and the trunk tips forward over it until the hand reaches the
- * ground: the whole upper body is the kneeling one rotated about the hips, so the spine stays
- * one piece, and only the arms are rewritten. The near leg's raised knee comes down as the
- * weight shifts onto the hand.
- */
-const PLANTING_GEOMETRY: PoseGeometry = {
-  w: 300,
-  h: 500,
-  body: {
-    head: [xform(K.head[0]!, PLANT_PIVOT), xform(K.head[1]!, PLANT_PIVOT)],
-    torso: [
-      xform(K.torso[0]!, PLANT_PIVOT),
-      poly([[PL_SX, PL_SY], [PL_SX - 12, (PL_SY + DOWN_GROUND_Y) / 2], [PL_SX - 16, DOWN_GROUND_Y - 24]], 22),
-      poly([[PR_SX, PR_SY], [PR_SX - 10, PR_SY + 56], [PR_SX - 18, PR_SY + 108]], 22),
-    ],
-    legs: [
-      poly([[144, 394], [196, 384], [207, 456]], 30),
-      poly([[158, 400], [188, 450], [252, 462]], 30),
-      xform(K.legs[2]!, PLANT_PIVOT),
-    ],
-    hands: [
-      centreAt(K.hands[0]! as BlobPart, PL_SX - 18, DOWN_GROUND_Y - 10),
-      centreAt(K.hands[1]! as BlobPart, PR_SX - 20, PR_SY + 118),
-    ],
-    feet: [centreAt(K.feet[0]! as BlobPart, 201, 464), centreAt(K.feet[1]! as BlobPart, 258, 468)],
-  },
-  anchors: {
-    head: { inner: [PL_SX - 34, PL_SY - 58], outer: [PL_SX + 10, PL_SY - 74] },
-    torso: { inner: [PL_SX - 6, PL_SY + 36], outer: [PR_SX + 22, PR_SY + 18] },
-    legs: { inner: [130, 424], outer: [216, 400] },
-    hands: { inner: [PL_SX - 40, DOWN_GROUND_Y - 10], outer: [PR_SX + 4, PR_SY + 124] },
-    feet: { inner: [198, 478], outer: [264, 480] },
-  },
-  headTop: rigid(142, 24 + KNEEL_DY, PLANT_PIVOT),
-  ankles: [
-    { x: 207, y: 456, hw: 15, rise: 22 },
-    { x: 252, y: 462, hw: 15, rise: 22 },
-  ],
-  neckY: rigid(150, 98 + KNEEL_DY, PLANT_PIVOT)[1],
-};
-
 const matched = matchTopology({
   seated: SEATED_GEOMETRY,
   standing: STANDING_GEOMETRY,
   walking: WALKING_GEOMETRY,
-  turned: TURNED_GEOMETRY,
-  kneeling: KNEELING_GEOMETRY,
-  planting: PLANTING_GEOMETRY,
 });
 
 export type Pose = 'standing' | 'seated' | 'walking' | 'lying';
@@ -626,12 +473,6 @@ export const GEOMETRY: Readonly<Record<Pose, PoseGeometry>> = {
   lying: matched['standing']!,
 };
 
-/**
- * The three poses the figure passes through on its way down to the mat, in order. They are not
- * `Pose`s: no tab ever rests in one, so they carry no facts of their own and never reach
- * `placement`. The scene walks them (`Scene.tsx`), seated to lying and back up in reverse.
- */
-export const GETTING_DOWN: readonly PoseGeometry[] = [matched['turned']!, matched['kneeling']!, matched['planting']!];
 
 /**
  * The drawn extents of a pose, in the scene's own sense: the points rotated by the lean the
@@ -668,6 +509,149 @@ export function extentsOf(g: PoseGeometry, deg = 0): { readonly minX: number; re
   }
   return { minX, maxX, minY, maxY };
 }
+
+// ---------------------------------------------------------------------------------------------
+// The walk, in profile
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * THE HIKER WALKS, AND THE WALK IS COMPUTED RATHER THAN DRAWN.
+ *
+ * The trail pose was a single mid-stride snapshot, drawn front-on. This is the cycle, and the
+ * figure is turned side-on for it (the trunk, hips and head scaled edge-on about the spine), for
+ * the reason the client gave: in profile there is a direction of travel, which is what makes a
+ * walk read as going somewhere rather than marching on the spot.
+ *
+ * It is built from joint ANGLES, not from keyframe positions, and that choice is the whole
+ * point. Interpolating positions is what made every other transition in this scene stretch and
+ * shrink its limbs: a knee lerped between two places cuts the chord, so the thigh it belongs to
+ * gets shorter on the way. Here the thigh is 100 units long at every phase of the cycle because
+ * it is placed by `hip + L * (sin t, cos t)` and `L` is a constant. A bone cannot change length
+ * if its length is never interpolated.
+ *
+ * The bob falls out of the same construction. The hip sits at a fixed local point, so the foot
+ * is further below it at mid-stance (the leg vertical) than at contact (the legs splayed), and
+ * since the scene stands a pose by its lowest ink, the body is lifted at mid-stance and dropped
+ * at contact. The rise and fall is the geometry being honest, not a sine added on top.
+ */
+
+/** The spine's x in the figure's own frame: both hips and both shoulders sit on it, side-on. */
+const SPINE_X = 150;
+const HIP_Y = 252;
+const SHOULDER_Y = 118;
+/** Bone lengths, read off the standing figure so the walker is the same person. */
+const THIGH = 100;
+const SHIN = 96;
+const UPPER_ARM = 83;
+const FOREARM = 62;
+
+/** How far the thigh swings from vertical, and how far the knee folds through the swing. */
+const THIGH_SWING = 26;
+const KNEE_FOLD = 62;
+/** Knees are never locked, even at stance. */
+const KNEE_REST = 5;
+/** The arms swing against the legs, and the elbow keeps a little bend. */
+const ARM_SWING = 19;
+const ELBOW_BEND = 20;
+/** The foot pitches up at heel strike and down at toe off. */
+const FOOT_PITCH = 17;
+/** The trunk leans into the hill and the pack. */
+const TRUNK_LEAN = 7;
+/** How far the body is squashed edge-on: the trunk and hips more than the head. */
+const PROFILE_KX = 0.62;
+const HEAD_KX = 0.82;
+
+const rad = (deg: number): number => (deg * Math.PI) / 180;
+/** A joint placed from its parent by a length and an angle off vertical, `+` leaning forward. */
+const joint = (x: number, y: number, len: number, deg: number): [number, number] => [x + len * Math.sin(rad(deg)), y + len * Math.cos(rad(deg))];
+
+/** One leg's thigh, shin and foot angles at a phase. `phase` runs 0 to 1 over a full stride. */
+function legAt(phase: number): { knee: [number, number]; ankle: [number, number]; thigh: number; shin: number; foot: number } {
+  const t = phase * 2 * Math.PI;
+  const thigh = THIGH_SWING * Math.cos(t);
+  // the knee folds through the swing and is quietest under the body at stance
+  const fold = KNEE_REST + KNEE_FOLD * Math.max(0, -Math.sin(t - 0.6));
+  const shin = thigh - fold;
+  const knee = joint(SPINE_X, HIP_Y, THIGH, thigh);
+  const ankle = joint(knee[0], knee[1], SHIN, shin);
+  return { knee, ankle, thigh, shin, foot: -FOOT_PITCH * Math.cos(t) };
+}
+
+/** One arm, swung against the leg of the same side. */
+function armAt(phase: number): { elbow: [number, number]; wrist: [number, number] } {
+  const t = phase * 2 * Math.PI;
+  const upper = ARM_SWING * Math.cos(t);
+  const bend = ELBOW_BEND * (1 + Math.max(0, Math.cos(t))) * 0.6;
+  const elbow = joint(SPINE_X, SHOULDER_Y, UPPER_ARM, upper);
+  const wrist = joint(elbow[0], elbow[1], FOREARM, upper - bend);
+  return { elbow, wrist };
+}
+
+/**
+ * The walker at a point in its stride, in the matched topology so it drops straight into the
+ * scene. `phase` is 0 to 1 and wraps; the far side of the body runs half a stride behind the
+ * near side, and each arm runs opposite the leg it shares a hip with.
+ */
+export function walkCycleAt(phase: number): PoseGeometry {
+  const base = GEOMETRY.walking;
+  const spine: Rigid = { kx: PROFILE_KX, ax: SPINE_X, ay: HIP_Y };
+  const lean: Rigid = { deg: TRUNK_LEAN, ax: SPINE_X, ay: HIP_Y };
+  const edgeOn = <T extends GeomPart>(part: T, kx = PROFILE_KX): T => xform(xform(part, { ...spine, kx }), lean);
+
+  const near = legAt(phase);
+  const far = legAt(phase + 0.5);
+  const nearArm = armAt(phase + 0.5);
+  const farArm = armAt(phase);
+  // the trunk carries the shoulders, so the arms are written in the leaned frame too
+  const sh = rigid(SPINE_X, SHOULDER_Y, lean);
+  const leaned = ([x, y]: [number, number]): [number, number] => rigid(x, y, lean);
+
+  const arm = (a: { elbow: [number, number]; wrist: [number, number] }): LinePart => poly([sh, leaned(a.elbow), leaned(a.wrist)], 22);
+  const leg = (l: ReturnType<typeof legAt>): LinePart => poly([[SPINE_X, HIP_Y], l.knee, l.ankle], 30);
+  const foot = (l: ReturnType<typeof legAt>, blob: BlobPart): BlobPart => {
+    const [cx, cy] = centreOf(blob);
+    const [ax, ay] = l.ankle;
+    return xform(xform(blob, { dx: ax - cx + 6, dy: ay - cy + 14 }), { deg: l.foot, ax, ay: ay + 14 });
+  };
+  const hand = (a: { wrist: [number, number] }, blob: BlobPart): BlobPart => {
+    const [wx, wy] = leaned(a.wrist);
+    return centreAt(blob, wx, wy + 8);
+  };
+
+  return {
+    w: base.w,
+    h: base.h,
+    body: {
+      head: [edgeOn(base.body.head[0]!, HEAD_KX), poly([leaned([SPINE_X, 84]), leaned([SPINE_X, 93]), leaned([SPINE_X, 102])], 22)],
+      // the far arm first, so it sits behind the near one
+      torso: [edgeOn(base.body.torso[0]!), arm(farArm), arm(nearArm)],
+      // the far leg first, for the same reason
+      legs: [leg(far), leg(near), edgeOn(base.body.legs[2]!)],
+      hands: [hand(farArm, base.body.hands[0]! as BlobPart), hand(nearArm, base.body.hands[1]! as BlobPart)],
+      feet: [foot(far, base.body.feet[0]! as BlobPart), foot(near, base.body.feet[1]! as BlobPart)],
+    },
+    anchors: {
+      head: { inner: [SPINE_X - 34, 52], outer: [SPINE_X + 30, 52] },
+      torso: { inner: [SPINE_X - 30, 170], outer: [SPINE_X + 34, 170] },
+      legs: { inner: [near.knee[0] - 26, near.knee[1]], outer: [near.knee[0] + 26, near.knee[1]] },
+      hands: { inner: [leaned(nearArm.wrist)[0] - 24, leaned(nearArm.wrist)[1]], outer: [leaned(nearArm.wrist)[0] + 24, leaned(nearArm.wrist)[1]] },
+      feet: { inner: [near.ankle[0] - 26, near.ankle[1] + 16], outer: [near.ankle[0] + 26, near.ankle[1] + 16] },
+    },
+    headTop: rigid(SPINE_X, 22, lean),
+    ankles: [
+      { x: far.ankle[0], y: far.ankle[1] + 2, hw: 18, rise: 26 },
+      { x: near.ankle[0], y: near.ankle[1] + 2, hw: 18, rise: 26 },
+    ],
+    neckY: rigid(SPINE_X, 100, lean)[1],
+    grip: ((): readonly [number, number] => {
+      const [wx, wy] = leaned(nearArm.wrist);
+      return [wx, wy + 8];
+    })(),
+  };
+}
+
+/** A full stride, in seconds. A hiker with a pack turns one over in a little under a second. */
+export const STRIDE_SECONDS = 0.92;
 
 /** Non-numeric pose facts, by pose. */
 const POSE_FACTS: Readonly<Record<Pose, { sockCuff: boolean; prop: JSX.Element | null }>> = {
@@ -711,6 +695,7 @@ export function specOf(geometry: PoseGeometry, facts: { sockCuff: boolean; prop:
     headTop: geometry.headTop,
     ankles: geometry.ankles,
     neckY: geometry.neckY,
+    ...(geometry.grip === undefined ? {} : { grip: geometry.grip }),
     sockCuff: facts.sockCuff,
     prop: facts.prop,
     geometry,
